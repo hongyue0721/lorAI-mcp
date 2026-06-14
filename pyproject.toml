@@ -1,0 +1,20 @@
+[project]
+name = "lor-mcp-server"
+version = "0.1.0"
+description = "MCP Server for Library of Ruina AI Agent"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=0.2.0",
+    "httpx",
+    "pydantic",
+]
+
+[project.scripts]
+lor-mcp = "lor_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lor_mcp"]
