@@ -34,66 +34,58 @@ An MCP (Model Context Protocol) server + in-game C# mod that lets AI agents play
 | .NET SDK | 4.7.2 兼容（Visual Studio Build Tools 或 .NET SDK） |
 | [BaseMod](https://github.com/USay560828/LoRBaseMod) | 游戏内 Mod 加载器 |
 
-### Step 1: 克隆仓库
+### Step 1: 安装 MCP Server
 
 ```bash
-git clone https://github.com/<your-username>/lorAI-mcp.git
-cd lorAI-mcp
-pip install -e .
+pip install lor-mcp-server
 ```
 
-### Step 2: 编译并部署 C# Mod
+### Step 2: 配置 MCP（一键自动）
+
+安装后直接运行配置脚本，自动检测并注册到所有已安装的 AI 客户端：
 
 ```bash
-cd LorAIHost
+lor-mcp-setup
+```
+
+支持的客户端：
+
+| 客户端 | 配置文件位置 |
+|---|---|
+| kimi-code | `~/.kimi-code/mcp.json` |
+| Claude Code | `.mcp.json`（项目目录） |
+| Claude Desktop | `claude_desktop_config.json` |
+| Cursor | `.cursor/mcp.json`（项目目录） |
+| Windsurf | `mcp_config.json` |
+| Cline (VS Code) | `cline_mcp_settings.json` |
+
+> `lor-mcp-setup` 会自动检测哪些客户端已安装，只写入检测到的。也可以手动指定：
+> - `lor-mcp-setup --client kimi` — 只注册到指定客户端
+> - `lor-mcp-setup --all` — 注册到全部已知客户端
+> - `lor-mcp-setup --list` — 查看检测结果
+> - `lor-mcp-setup --unregister` — 取消注册
+
+### Step 3: 部署 C# Mod 到游戏
+
+从 GitHub 下载 [LorAIHost Release](https://github.com/hongyue0721/lorAI-mcp/releases)，或自行编译：
+
+```bash
+git clone https://github.com/hongyue0721/lorAI-mcp.git
+cd lorAI-mcp/LorAIHost
+# 修改 LorAIHost.csproj 中的 <GameDir> 为你的游戏路径
 dotnet build -c Release
 ```
 
-将编译产物部署到游戏目录：
+部署到游戏目录：
 
 ```bash
-# Windows (Git Bash)
 GAME_DIR="/c/Program Files (x86)/Steam/steamapps/common/Library Of Ruina"
 mkdir -p "$GAME_DIR/LibraryOfRuina_Data/Mods/LorAIHost/Assemblies"
 cp bin/Release/LorAIHost.dll "$GAME_DIR/LibraryOfRuina_Data/Mods/LorAIHost/Assemblies/"
 cp StageModInfo.xml "$GAME_DIR/LibraryOfRuina_Data/Mods/LorAIHost/"
 ```
 
-> 修改 `LorAIHost/LorAIHost.csproj` 中的 `<GameDir>` 路径，指向你的游戏安装位置。
-
-启动游戏，在 Mod 管理器中启用 **LorAIHost**，然后重启游戏。
-
-### Step 3: 配置 MCP
-
-#### Agent 一键配置
-
-如果你在使用 kimi-code（或任何兼容 `.kimi-code/mcp.json` 的客户端），直接运行：
-
-```bash
-python scripts/setup-mcp.py
-```
-
-脚本会自动把 `lor-mcp` 注册到 `~/.kimi-code/mcp.json`，重启客户端即可使用。
-
-#### 手动配置
-
-在你的 MCP 客户端配置文件中添加：
-
-```json
-{
-  "mcpServers": {
-    "lor-mcp": {
-      "command": "lor-mcp",
-      "args": [],
-      "env": {
-        "LOR_API_BASE_URL": "http://localhost:17127"
-      }
-    }
-  }
-}
-```
-
-如果 `lor-mcp` 不在 PATH 上，可以用 `python -m lor_mcp.server` 替代。
+启动游戏，在 BaseMod 管理器中启用 **LorAIHost**，然后重启游戏。
 
 ### 验证
 
@@ -105,7 +97,20 @@ curl http://localhost:17127/health
 # {"status":"ok","version":"1.0.0"}
 ```
 
-3. 在 AI Agent 中调用 `health_check` 工具确认 MCP 连通
+3. 重启你的 AI 客户端，调用 `health_check` 工具确认 MCP 连通
+
+---
+
+## 给 AI Agent 的指令
+
+把下面这段话发给任意支持 MCP 的 AI 客户端（kimi-code / Claude Code / OpenCode / Cursor 等），它会自动完成安装和配置：
+
+```
+帮我安装并配置 Library of Ruina 的 MCP server。执行以下步骤：
+1. 运行 pip install lor-mcp-server
+2. 运行 lor-mcp-setup（自动注册到你的 MCP 配置）
+3. 完成后告诉我需要重启客户端才能生效
+```
 
 ---
 
@@ -116,6 +121,7 @@ lorAI-mcp/
 ├── lor_mcp/                   # Python MCP Server
 │   ├── server.py              # FastMCP 入口 + 基础 tools
 │   ├── tools.py               # Guided tools（战斗自动化）
+│   ├── setup.py               # MCP 一键注册脚本（lor-mcp-setup）
 │   ├── config.py              # 配置
 │   └── state.py               # 状态模型
 ├── LorAIHost/                 # C# Mod（HTTP bridge + 状态导出 + 战斗自动化）
@@ -133,8 +139,6 @@ lorAI-mcp/
 │   ├── JsonHelper.cs          # JSON 序列化
 │   ├── StageModInfo.xml       # Mod 元数据
 │   └── LorAIHost.csproj
-├── scripts/
-│   └── setup-mcp.py           # MCP 一键注册脚本
 ├── pyproject.toml
 └── requirements.txt
 ```

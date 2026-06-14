@@ -11,6 +11,7 @@ dependencies = [
 
 [project.scripts]
 lor-mcp = "lor_mcp.server:main"
+lor-mcp-setup = "lor_mcp.setup:main"
 
 [build-system]
 requires = ["hatchling"]
