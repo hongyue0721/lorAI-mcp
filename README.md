@@ -272,4 +272,4 @@ EndBattle / 回到 RoundStartPhase_UI
 
 ## 许可证
 
-[AGPL-3.0-only](LICENSE)
+[MIT](LICENSE)
