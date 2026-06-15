@@ -23,17 +23,14 @@ import httpx
 from fastmcp import FastMCP
 
 from lor_mcp.config import LOR_API_BASE_URL
+from lor_mcp.server import _get_client as _get_shared_client
 
 
 # ── HTTP helpers ──
 
-_client: httpx.AsyncClient | None = None
-
 async def _get_client() -> httpx.AsyncClient:
-    global _client
-    if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(base_url=LOR_API_BASE_URL, timeout=60.0)
-    return _client
+    """Use the shared client from server.py for bridge detection + proxy fallback."""
+    return await _get_shared_client()
 
 async def _post_action(body: dict[str, Any]) -> dict[str, Any]:
     client = await _get_client()
@@ -184,7 +181,7 @@ def register_guided_tools(mcp: FastMCP) -> None:
             phase = nav.get("currentUIPhase", "")
             scene = nav.get("activeScene", "")
 
-            if bstate == "Battle" and battle.get("phase") not in ("EndBattle", "EndBattle2", None):
+            if bstate == "Battle":
                 return {"success": True, "phase": battle.get("phase")}
 
             if phase == "BattleSetting" or bstate == "Setting":
@@ -216,6 +213,7 @@ def register_guided_tools(mcp: FastMCP) -> None:
         """
         stuck_phase = ""
         stuck_count = 0
+        _recent_phases: list[str] = []
 
         for round_num in range(max_rounds):
             state = await _get_state()
@@ -228,9 +226,18 @@ def register_guided_tools(mcp: FastMCP) -> None:
             phase = battle.get("phase", "")
             scene = nav.get("activeScene", "")
 
-            # Victory
+            # Victory / Defeat
             if phase in ("EndBattle", "EndBattle2"):
-                return {"result": "victory", "rounds": round_num, "phase": phase}
+                player_alive = battle.get("playerAliveCount", 0)
+                enemy_alive = battle.get("enemyAliveCount", 0)
+                if enemy_alive == 0 and player_alive > 0:
+                    result = "victory"
+                elif player_alive == 0:
+                    result = "defeat"
+                else:
+                    result = "ended"
+                return {"result": result, "rounds": round_num, "phase": phase,
+                        "playerAlive": player_alive, "enemyAlive": enemy_alive}
 
             if not battle.get("inBattle") and scene != "Battle":
                 return {"result": "not_in_battle", "rounds": round_num, "phase": phase}
@@ -241,29 +248,45 @@ def register_guided_tools(mcp: FastMCP) -> None:
                 await asyncio.sleep(2)
                 continue
 
-            # Track stuck phases
-            if phase == stuck_phase:
-                stuck_count += 1
+            # Track stuck phases (detect oscillation within a set of phases)
+            _recent_phases.append(phase)
+            if len(_recent_phases) > 6:
+                _recent_phases.pop(0)
+            # If the last 6 phases are cycling through the same 1-3 phases, we're stuck
+            unique_recent = set(_recent_phases)
+            if phase in unique_recent and len(_recent_phases) >= 4:
+                phase_counts = {}
+                for p in _recent_phases:
+                    phase_counts[p] = phase_counts.get(p, 0) + 1
+                # If any single phase appeared 3+ times in last 6 iterations
+                stuck_count = max(phase_counts.values()) if phase_counts else 0
             else:
-                stuck_phase = phase
                 stuck_count = 0
 
             # RoundEndPhase: emotion card selection
             if phase == "RoundEndPhase":
                 if stuck_count >= 2:
-                    best_idx = await _pick_best_emotion_card()
-                    await _safe_post({"action": "selectEmotionCard", "index": best_idx})
+                    # Check if emotion UI is actually active before selecting
+                    emo_result = _result(await _safe_post({"action": "getEmotionCandidates"}))
+                    if isinstance(emo_result, dict) and emo_result.get("active"):
+                        best_idx = await _pick_best_emotion_card()
+                        await _safe_post({"action": "selectEmotionCard", "index": best_idx})
+                        await asyncio.sleep(2)
+                        _recent_phases.clear()
+                        continue
+                    # No emotion UI active, try force-advance
+                    await _safe_post({"action": "forceAdvancePhase", "phase": phase})
                     await asyncio.sleep(2)
-                    stuck_count = 0
+                    _recent_phases.clear()
                     continue
                 await asyncio.sleep(3)
                 continue
 
             # Force-advance stuck phases (ArrangeEquippedCards etc.)
-            if stuck_count > 3:
+            if stuck_count >= 3:
                 await _safe_post({"action": "forceAdvancePhase", "phase": phase})
                 await asyncio.sleep(2)
-                stuck_count = 0
+                _recent_phases.clear()
                 continue
 
             # Round start phases
@@ -343,10 +366,9 @@ def register_guided_tools(mcp: FastMCP) -> None:
         else:
             return {"success": False, "message": "Timed out waiting for card phase"}
 
-        auto = await _safe_post({"action": "autoPlay"})
-        await asyncio.sleep(0.5)
-        confirm = await _safe_post({"action": "confirmCards"})
-        return {"success": True, "acted": True, "autoPlay": auto, "confirm": confirm}
+        # Atomic autoPlay + confirmCards
+        result = await _safe_post({"action": "playBattleRound"})
+        return {"success": True, "acted": True, "result": _result(result)}
 
     @mcp.tool()
     async def skip_story() -> dict[str, Any]:

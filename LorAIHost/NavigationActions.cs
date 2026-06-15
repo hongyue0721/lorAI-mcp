@@ -16,7 +16,9 @@ namespace LorAIHost
             var ui = UI.UIController.Instance;
             if (ui == null) return Error("UIController.Instance is null");
 
-            var phase = (UI.UIPhase)Enum.Parse(typeof(UI.UIPhase), phaseObj.ToString(), true);
+            if (!Enum.TryParse(phaseObj.ToString(), true, out UI.UIPhase phase))
+                return Error($"Invalid phase '{phaseObj}'. Valid: " +
+                    string.Join(", ", Enum.GetNames(typeof(UI.UIPhase))));
             ui.CallUIPhase(phase);
 
             return Success($"Navigated to {phase}");
@@ -32,7 +34,9 @@ namespace LorAIHost
             var ui = UI.UIController.Instance;
             if (ui == null) return Error("UIController.Instance is null");
 
-            var sephirah = (SephirahType)Enum.Parse(typeof(SephirahType), sepObj.ToString(), true);
+            if (!Enum.TryParse(sepObj.ToString(), true, out SephirahType sephirah))
+                return Error($"Invalid sephirah '{sepObj}'. Valid: " +
+                    string.Join(", ", Enum.GetNames(typeof(SephirahType))));
             ui.SetCurrentSephirah(sephirah);
 
             return Success($"Selected sephirah: {sephirah}");
@@ -45,17 +49,19 @@ namespace LorAIHost
             if (!args.TryGetValue("sephirah", out var sepObj))
                 return Error("sephirah parameter required");
 
-            var sephirah = (SephirahType)Enum.Parse(typeof(SephirahType), sepObj.ToString(), true);
+            if (!Enum.TryParse(sepObj.ToString(), true, out SephirahType sephirahFloor))
+                return Error($"Invalid sephirah '{sepObj}'. Valid: " +
+                    string.Join(", ", Enum.GetNames(typeof(SephirahType))));
             var libModel = LibraryModel.Instance;
             if (libModel == null) return Error("LibraryModel not found");
 
-            var floor = libModel.GetFloor(sephirah);
-            if (floor == null) return Error($"Floor {sephirah} not found");
+            var floor = libModel.GetFloor(sephirahFloor);
+            if (floor == null) return Error($"Floor {sephirahFloor} not found");
 
             return new Dictionary<string, object>
             {
                 ["success"] = true,
-                ["sephirah"] = sephirah.ToString(),
+                ["sephirah"] = sephirahFloor.ToString(),
                 ["level"] = floor.Level,
                 ["progress"] = ReflectionHelper.GetFieldValue(floor, "_progress"),
             };

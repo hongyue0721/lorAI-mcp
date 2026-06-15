@@ -14,25 +14,35 @@ Actual endpoints:
 
 from __future__ import annotations
 
-import asyncio
 import json
+import time
 from typing import Any
 
 import httpx
 from fastmcp import FastMCP
 
 from lor_mcp.config import LOR_API_BASE_URL, LOR_MCP_TOOL_PROFILE, LOR_PROXY_FALLBACK_URL
-from lor_mcp.state import LorState
 
 mcp = FastMCP("lor-mcp-server")
 
 _client: httpx.AsyncClient | None = None
-_bridge_mode: str = "unknown"  # "native" or "proxy"
+_bridge_mode: str = "unknown"  # "native" or "proxy" or "unavailable"
+_last_detect_time: float = 0.0
+_DETECT_RETRY_INTERVAL = 15.0  # re-detect bridge every 15s if unavailable
 
 
 async def _detect_bridge() -> httpx.AsyncClient:
     """Try native C# bridge first, fall back to Python proxy."""
-    global _client, _bridge_mode
+    global _client, _bridge_mode, _last_detect_time
+    _last_detect_time = time.monotonic()
+
+    # Close any existing client before creating a new one
+    if _client is not None and not _client.is_closed:
+        try:
+            await _client.aclose()
+        except Exception:
+            pass
+
     # Try native bridge (C# HttpListener on game port)
     try:
         native = httpx.AsyncClient(base_url=LOR_API_BASE_URL, timeout=5.0)
@@ -42,7 +52,7 @@ async def _detect_bridge() -> httpx.AsyncClient:
             _bridge_mode = "native"
             return _client
         await native.aclose()
-    except httpx.HTTPError:
+    except (httpx.HTTPError, OSError, RuntimeError):
         pass
 
     # Fall back to Python proxy
@@ -54,7 +64,7 @@ async def _detect_bridge() -> httpx.AsyncClient:
             _bridge_mode = "proxy"
             return _client
         await proxy.aclose()
-    except httpx.HTTPError:
+    except (httpx.HTTPError, OSError, RuntimeError):
         pass
 
     # Neither bridge available — create client anyway (will fail on requests)
@@ -64,9 +74,14 @@ async def _detect_bridge() -> httpx.AsyncClient:
 
 
 async def _get_client() -> httpx.AsyncClient:
-    """Return (and lazily create) the shared httpx async client."""
+    """Return (and lazily create) the shared httpx async client.
+
+    If the bridge was previously unavailable, re-detect periodically.
+    """
     global _client
     if _client is None or _client.is_closed:
+        _client = await _detect_bridge()
+    elif _bridge_mode == "unavailable" and (time.monotonic() - _last_detect_time) > _DETECT_RETRY_INTERVAL:
         _client = await _detect_bridge()
     return _client
 
@@ -96,7 +111,10 @@ def _parse_params_into(params: str, body: dict[str, Any]) -> None:
             continue
         key, val = kv[0].strip(), kv[1].strip()
         if val and val[0] in ("[", "{"):
-            body[key] = val
+            try:
+                body[key] = json.loads(val)
+            except json.JSONDecodeError:
+                body[key] = val
             continue
         if val.lower() == "true":
             body[key] = True
@@ -129,28 +147,18 @@ async def health_check() -> dict[str, Any]:
 # ──────────────────────────── state ────────────────────────────
 
 @mcp.tool()
-async def get_game_state() -> dict[str, Any]:
-    """Return the full current Library of Ruina game state.
-
-    Includes: meta, navigation, progression, floors, inventory, availableStages, battle.
-    """
-    client = await _get_client()
-    resp = await client.get("/state")
-    resp.raise_for_status()
-    raw = resp.json()
-    return raw
-
-
-@mcp.tool()
 async def get_state_layer(layer: str) -> dict[str, Any]:
     """Return a specific layer of the game state.
 
     Valid layers: navigation, progression, floors, inventory, availablestages, battle
     """
     client = await _get_client()
-    resp = await client.get(f"/state/{layer}")
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp = await client.get(f"/state/{layer}")
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as exc:
+        return {"error": str(exc)}
 
 
 # ──────────────────────────── static game data ────────────────────────────
@@ -162,9 +170,12 @@ async def get_static_data_list() -> dict[str, Any]:
     Returns file names and sizes for: cards, books, enemies, passives, decks, stages, etc.
     """
     client = await _get_client()
-    resp = await client.get("/static")
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp = await client.get("/static")
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as exc:
+        return {"error": str(exc)}
 
 
 @mcp.tool()
@@ -179,9 +190,12 @@ async def get_game_data_item(collection: str, item_id: str) -> dict[str, Any]:
                  quests, floor_levels, final_rewards, tooltips, titles, credits
     """
     client = await _get_client()
-    resp = await client.get(f"/static/{collection}")
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        resp = await client.get(f"/static/{collection}")
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPError as exc:
+        return {"error": str(exc)}
     # The static files are JSON arrays or dicts; search for the item by id
     if isinstance(data, list):
         for item in data:
@@ -223,9 +237,12 @@ async def get_game_data_items(collection: str, item_ids: str) -> dict[str, Any]:
     """
     ids = [x.strip() for x in item_ids.split(",")]
     client = await _get_client()
-    resp = await client.get(f"/static/{collection}")
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        resp = await client.get(f"/static/{collection}")
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPError as exc:
+        return {"error": str(exc), "items": [], "count": 0}
     results = []
     if isinstance(data, list):
         for item in data:
@@ -245,36 +262,38 @@ async def get_game_data_items(collection: str, item_ids: str) -> dict[str, Any]:
 
 # ──────────────────────────── action execution ────────────────────────────
 
-# Available actions from BridgeActions:
-# navigate, selectSephirah, getFloor, startStage, listMethods,
-# skipStory, endStory, advanceStory, killAllEnemy, autoPlay,
-# endBattle, closeBattleScene, gameOver, getStageInfo,
-# clickBattleResult, startBattle, callMethod, getGameState, runStage
-
 @mcp.tool()
 async def act(action: str, params: str = "") -> dict[str, Any]:
     """Execute a game action through the Mod HTTP bridge.
 
     Available actions:
-      navigate         - navigate UI phase (params: phase=<phase>)
-      selectSephirah   - select a sephirah floor (params: sephirah=<sephirah>)
-      getFloor         - get floor data (params: sephirah=<sephirah>)
-      startStage       - start a stage/battle (params: stageId=<id>)
-      listMethods      - list available methods on an object (params: objectType=<type>)
-      skipStory        - skip current story
-      endStory         - end current story
-      advanceStory     - advance current story
-      killAllEnemy     - kill all enemy units
-      autoPlay         - auto-play current battle round
-      endBattle        - force-end current battle
-      closeBattleScene - close the battle scene
-      gameOver         - trigger game over
-      getStageInfo     - get stage info (params: stageId=<id>)
+      navigate          - navigate UI phase (params: phase=<phase>)
+      selectSephirah    - select a sephirah floor (params: sephirah=<sephirah>)
+      getFloor          - get floor data (params: sephirah=<sephirah>)
+      startStage        - set stage on invitation panel (params: stageId=<id>)
+      runStage          - run a stage end-to-end (params: stageId=<id>)
+      startBattle       - start the battle from BattleSetting panel
+      startGame         - click Continue/New Game on title screen
+      prepareBattle     - auto-select books and prepare battle (params: stageId=<id>)
+      autoPlay          - game's built-in auto card placement
+      confirmCards      - confirm card placement (ApplyLibrarianCardPhase only)
+      playBattleRound   - atomic autoPlay + confirmCards
+      endBattle         - force-end current battle
+      closeBattleScene  - close the battle scene
       clickBattleResult - click battle result button
-      startBattle      - start the battle phase
-      callMethod       - call an arbitrary method via reflection (params: objectType=<type>, methodName=<method>)
-      getGameState     - get game state info
-      runStage         - run a stage end-to-end (params: stageId=<id>, optional: sephirah=<sephirah>)
+      gameOver          - trigger game over
+      killAllEnemy      - kill all enemy units (debug)
+      getStageInfo      - get stage controller info (params: stageId=<id>)
+      getBattleUnits    - export all battle unit data
+      getEmotionCandidates - get emotion card candidates
+      selectEmotionCard - select emotion card by index (params: index=<n>)
+      forceAdvancePhase - force-advance a stuck phase (params: phase=<name>)
+      skipStory         - skip current story
+      endStory          - end current story
+      advanceStory      - advance current story
+      listMethods       - list methods on a type (params: type=<type>)
+      callMethod        - call method via reflection (params: type=<type>, method=<name>)
+      getGameState      - diagnostic singleton dump
 
     When LOR_MCP_TOOL_PROFILE == 'guided', prefer the specific tools from tools.py.
     params: comma-separated key=value pairs, e.g. "stageId=3,sephirah=Malkuth"
@@ -284,9 +303,12 @@ async def act(action: str, params: str = "") -> dict[str, Any]:
     body: dict[str, Any] = {"action": action}
     if params:
         _parse_params_into(params, body)
-    resp = await client.post("/action", json=body)
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp = await client.post("/action", json=body)
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as exc:
+        return {"error": str(exc), "action": action}
 
 
 # ──────────────────────────── action status ────────────────────────────
@@ -305,7 +327,7 @@ async def get_action_status() -> dict[str, Any]:
             return {"available": False, "message": "action-status endpoint not in this mod version"}
         resp.raise_for_status()
         return resp.json()
-    except httpx.HTTPStatusError as exc:
+    except httpx.HTTPError as exc:
         return {"available": False, "error": str(exc)}
 
 

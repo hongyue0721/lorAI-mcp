@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -13,7 +14,7 @@ namespace LorAIHost
     /// </summary>
     public static class ReflectionHelper
     {
-        private static Dictionary<string, Type> _typeCache = new Dictionary<string, Type>();
+        private static ConcurrentDictionary<string, Type> _typeCache = new ConcurrentDictionary<string, Type>();
 
         // ───────────────────────── Type Lookup ─────────────────────────
 
@@ -78,6 +79,8 @@ namespace LorAIHost
                 }
             }
 
+            // Cache null results too to avoid repeated assembly scans
+            _typeCache.TryAdd(typeName, null);
             return null;
         }
 
@@ -327,14 +330,17 @@ namespace LorAIHost
 
             if (methods.Length == 0)
             {
-                // Try without arg count constraint
+                // Fallback: find methods with at least the requested arg count
                 methods = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
-                    .Where(m => m.Name == methodName)
+                    .Where(m => m.Name == methodName && m.GetParameters().Length >= argCount)
                     .ToArray();
             }
 
             if (methods.Length == 0)
-                return null;
+            {
+                throw new MissingMethodException(type.FullName, methodName +
+                    " (no overload found with " + argCount + " or more parameters)");
+            }
 
             try
             {

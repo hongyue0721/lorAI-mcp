@@ -162,6 +162,12 @@ namespace LorAIHost
                     if (path.StartsWith("/static/"))
                     {
                         string name = path.Substring("/static/".Length);
+                        // Prevent path traversal
+                        if (name.Contains("..") || name.Contains("/") || name.Contains("\\"))
+                        {
+                            RespondJson(ctx.Response, 400, Err("Invalid file name"));
+                            return;
+                        }
                         string filePath = Path.Combine(_staticDir, name + ".json");
                         if (File.Exists(filePath))
                         {
@@ -243,8 +249,11 @@ namespace LorAIHost
         /// </summary>
         public static void ProcessQueue()
         {
-            while (true)
+            // Process at most 2 requests per frame to avoid frame spikes
+            int processed = 0;
+            while (processed < 2)
             {
+                processed++;
                 PendingRequest pending;
                 lock (_lock)
                 {
@@ -291,17 +300,6 @@ namespace LorAIHost
 
                         Dictionary<string, object> result = ActionHandler.Execute(action, parsed);
 
-                        Dictionary<string, object> response = new Dictionary<string, object>
-                        {
-                            { "status", (result.ContainsKey("success") && result["success"] is bool s && s) ? "ok" : "error" },
-                            { "action", parsed },
-                            { "result", result }
-                        };
-
-                        // Attach current state snapshot
-                        try { response["state"] = StateExporter.ExportFullState(); }
-                        catch (Exception ex) { response["stateError"] = ex.Message; }
-
                         // Deferred actions: don't respond yet, let ProcessDeferred handle it
                         if (result.ContainsKey("_deferred") && result["_deferred"] is bool d && d)
                         {
@@ -326,6 +324,17 @@ namespace LorAIHost
                         }
                         else
                         {
+                            Dictionary<string, object> response = new Dictionary<string, object>
+                            {
+                                { "status", (result.ContainsKey("success") && result["success"] is bool s && s) ? "ok" : "error" },
+                                { "action", parsed },
+                                { "result", result }
+                            };
+
+                            // Attach current state snapshot (only for non-deferred)
+                            try { response["state"] = StateExporter.ExportFullState(); }
+                            catch (Exception ex) { response["stateError"] = ex.Message; }
+
                             RespondJson(pending.Context.Response, 200, response);
                         }
                         continue;

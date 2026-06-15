@@ -307,24 +307,32 @@ namespace LorAIHost
 
             d["name"] = ReflectionHelper.GetFieldValue(unitData, "name")
                      ?? ReflectionHelper.GetFieldValue(unitData, "Name");
-            d["isLock"] = ReflectionHelper.GetFieldValue(unitData, "IsLockUnit") is MethodInfo mi
-                ? mi.Invoke(unitData, null)
-                : ReflectionHelper.GetFieldValue(unitData, "isLock");
+
+            // IsLockUnit is a method, not a field
+            var isLockVal = false;
+            var isLockMethod = unitData.GetType().GetMethod("IsLockUnit",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (isLockMethod != null)
+            {
+                try { isLockVal = Convert.ToBoolean(isLockMethod.Invoke(unitData, null)); }
+                catch { }
+            }
+            else
+            {
+                var v = ReflectionHelper.GetFieldValue(unitData, "isLock");
+                if (v != null) try { isLockVal = Convert.ToBoolean(v); } catch { }
+            }
+            d["isLock"] = isLockVal;
             d["isSephirah"] = ReflectionHelper.GetFieldValue(unitData, "isSephirah");
 
             // Equipped book
             var bookItem = ReflectionHelper.GetFieldValue(unitData, "bookItem");
             if (bookItem != null)
             {
-                var bookClassInfoId = ReflectionHelper.GetFieldValue(bookItem, "GetBookClassInfoId");
-                if (bookClassInfoId == null)
-                {
-                    var classInfo = ReflectionHelper.GetFieldValue(bookItem, "ClassInfo");
-                    bookClassInfoId = classInfo != null
-                        ? ReflectionHelper.GetFieldValue(classInfo, "id")
-                        : null;
-                }
-                d["bookId"] = bookClassInfoId;
+                var classInfo = ReflectionHelper.GetFieldValue(bookItem, "ClassInfo");
+                d["bookId"] = classInfo != null
+                    ? ReflectionHelper.GetFieldValue(classInfo, "id")
+                    : null;
             }
 
             return d;
@@ -442,12 +450,24 @@ namespace LorAIHost
         //  Available Stages State
         // ----------------------------------------------------------------
 
+        private static List<Dictionary<string, object>> _stagesCache;
+        private static float _stagesCacheTime;
+        private const float STAGES_CACHE_TTL = 10f; // seconds
+
         private static Dictionary<string, object> GetAvailableStagesState()
         {
             var result = new Dictionary<string, object>();
 
             try
             {
+                // Use cached stages if fresh
+                if (_stagesCache != null && (Time.time - _stagesCacheTime) < STAGES_CACHE_TTL)
+                {
+                    result["stages"] = _stagesCache;
+                    result["totalCount"] = _stagesCache.Count;
+                    return result;
+                }
+
                 var stageList = Singleton<StageClassInfoList>.Instance;
                 if (stageList == null) return result;
 
@@ -501,6 +521,10 @@ namespace LorAIHost
                     stages.Add(stageDict);
                 }
 
+                // Update cache
+                _stagesCache = stages;
+                _stagesCacheTime = Time.time;
+
                 result["stages"] = stages;
                 result["totalCount"] = stages.Count;
             }
@@ -531,7 +555,7 @@ namespace LorAIHost
             var battleState = stageCtrl.battleState;
             var phase = stageCtrl.Phase;
             bool inBattle = battleState != StageController.BattleState.None
-                         || phase != StageController.StagePhase.EndBattle;
+                         && phase != StageController.StagePhase.EndBattle;
 
             result["inBattle"] = inBattle;
             if (!inBattle) return result;
@@ -633,9 +657,16 @@ namespace LorAIHost
                             else
                                 cardDict["id"] = ReflectionHelper.GetFieldValue(card, "_id")?.ToString();
 
-                            // Card name
-                            var nameProp = ReflectionHelper.GetFieldValue(card, "Name");
-                            cardDict["name"] = nameProp;
+                            // Card name: try property, then GetName() method
+                            var cardName = ReflectionHelper.GetFieldValue(card, "Name");
+                            if (cardName == null)
+                            {
+                                var getNameMethod = card.GetType().GetMethod("GetName",
+                                    BindingFlags.Public | BindingFlags.Instance);
+                                if (getNameMethod != null)
+                                    cardName = getNameMethod.Invoke(card, null);
+                            }
+                            cardDict["name"] = cardName;
 
                             // Card cost: try GetCost() method first, then _cost field
                             var getCostMethod = card.GetType().GetMethod("GetCost",
@@ -696,7 +727,8 @@ namespace LorAIHost
                 {
                     d["breakGauge"] = breakDetail.breakGauge;
                     d["breakLife"] = breakDetail.breakLife;
-                    d["maxBreakLife"] = ReflectionHelper.GetFieldValue(breakDetail, "MaxBreakLife");
+                    d["maxBreakLife"] = ReflectionHelper.GetFieldValue(breakDetail, "MaxBreakLife")
+                        ?? ReflectionHelper.GetFieldValue(breakDetail, "maxBreakLife");
                 }
             }
             catch (Exception e)
@@ -860,7 +892,9 @@ namespace LorAIHost
                 var passiveDetail = unit.passiveDetail;
                 if (passiveDetail != null)
                 {
-                    var passiveList = ReflectionHelper.GetFieldValue(passiveDetail, "PassiveList") as IList;
+                    var passiveList = ReflectionHelper.GetFieldValue(passiveDetail, "PassiveList") as IList
+                        ?? ReflectionHelper.GetFieldValue(passiveDetail, "_passiveList") as IList
+                        ?? ReflectionHelper.GetFieldValue(passiveDetail, "passiveList") as IList;
                     if (passiveList != null)
                     {
                         var passives = new List<string>();
@@ -900,8 +934,16 @@ namespace LorAIHost
             else
                 cardDict["id"] = ReflectionHelper.GetFieldValue(card, "_id")?.ToString();
 
-            // Card name
-            cardDict["name"] = ReflectionHelper.GetFieldValue(card, "Name");
+            // Card name: try property, then GetName() method
+            var cardName = ReflectionHelper.GetFieldValue(card, "Name");
+            if (cardName == null)
+            {
+                var getNameMethod = card.GetType().GetMethod("GetName",
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (getNameMethod != null)
+                    cardName = getNameMethod.Invoke(card, null);
+            }
+            cardDict["name"] = cardName;
 
             // Card cost
             var getCostMethod = card.GetType().GetMethod("GetCost",

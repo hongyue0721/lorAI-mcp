@@ -75,16 +75,15 @@ def _claude_desktop_path() -> Path:
 
 
 def _cline_path() -> Path:
-    if APPDATA:
+    if IS_WINDOWS and APPDATA:
         return APPDATA / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
+    if IS_MACOS:
+        return HOME / "Library" / "Application Support" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
     return HOME / ".config" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
 
 
 def _windsurf_path() -> Path:
-    if IS_WINDOWS and APPDATA:
-        return APPDATA / "Codeium" / "windsurf" / "mcp_config.json"
-    if IS_MACOS:
-        return HOME / ".codeium" / "windsurf" / "mcp_config.json"
+    # Windsurf uses ~/.codeium/windsurf on all platforms (not AppData)
     return HOME / ".codeium" / "windsurf" / "mcp_config.json"
 
 
@@ -128,7 +127,7 @@ def _get_client_specs() -> list[ClientSpec]:
             id="cline",
             name="Cline (VS Code)",
             path=_cline_path(),
-            top_key="servers",
+            top_key="mcpServers",
         ),
     ]
 

@@ -82,8 +82,11 @@ namespace LorAIHost
                 // Sort by HP descending
                 candidateBooks.Sort((a, b) => GetBookHp(b).CompareTo(GetBookHp(a)));
 
-                // Select top 5
-                int maxBooks = Mathf.Min(candidateBooks.Count, 5);
+                // Determine max books from stage info, default to 5
+                int maxBooks = 5;
+                if (stageInfo.stageType == StageType.Invitation && stageInfo.invitationInfo != null)
+                    maxBooks = stageInfo.invitationInfo.bookNum;
+                maxBooks = Mathf.Min(candidateBooks.Count, maxBooks);
                 var selectedBooks = new List<DropBookXmlInfo>();
                 for (int i = 0; i < maxBooks; i++)
                     selectedBooks.Add(candidateBooks[i]);
@@ -287,7 +290,7 @@ namespace LorAIHost
                 // Handle SelectOne target selection
                 FieldInfo needUnitField = lut.GetField("_needUnitSelection",
                     BindingFlags.Instance | BindingFlags.NonPublic);
-                if (needUnitField != null && (bool)needUnitField.GetValue(levelupUi))
+                if (needUnitField != null && Convert.ToBoolean(needUnitField.GetValue(levelupUi)))
                 {
                     BattleObjectManager bom = BattleObjectManager.instance;
                     if (bom != null)
@@ -346,6 +349,19 @@ namespace LorAIHost
 
                 switch (phaseToMatch)
                 {
+                    // Round start phases (missing before)
+                    case "RoundStartPhase_UI":
+                        targetPhase = "RoundStartPhase_System"; break;
+                    case "RoundStartPhase_System":
+                        targetPhase = "SortUnitPhase"; break;
+                    // Sort/draw phases
+                    case "SortUnitPhase":
+                        targetPhase = "DrawCardPhase"; break;
+                    case "DrawCardPhase":
+                        targetPhase = "ApplyEnemyCardPhase"; break;
+                    case "ApplyEnemyCardPhase":
+                        targetPhase = "ApplyLibrarianCardPhase"; break;
+                    // Existing mappings
                     case "ArrangeEquippedCards":
                         targetPhase = "ActivateStartBattleEffect"; break;
                     case "ActivateStartBattleEffect":
@@ -362,6 +378,13 @@ namespace LorAIHost
                         targetPhase = "WaitUnitsArrive"; break;
                     case "WaitUnitsArrive":
                         targetPhase = "CheckParrying"; break;
+                    // Combat resolution phases (missing before)
+                    case "CheckParrying":
+                        targetPhase = "CheckOneSideAction"; break;
+                    case "CheckOneSideAction":
+                        targetPhase = "ProcessViewAction"; break;
+                    case "ProcessViewAction":
+                        targetPhase = "RoundEndPhase"; break;
                     default:
                         return new Dictionary<string, object>
                         {
@@ -376,7 +399,7 @@ namespace LorAIHost
                 if (phaseEnum == null)
                     return Error("StagePhase enum not found");
 
-                object targetEnumVal = Enum.Parse(phaseEnum, targetPhase);
+                object targetEnumVal = Enum.Parse(phaseEnum, targetPhase, true);
                 phaseField.SetValue(sc, targetEnumVal);
 
                 Debug.Log("[LorAI] ForceAdvancePhase: " + phaseToMatch + " -> " + targetPhase);
@@ -546,9 +569,9 @@ namespace LorAIHost
 
         private static object GetMemberValue(Type t, object obj, string name)
         {
-            FieldInfo f = t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            FieldInfo f = t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
             if (f != null) return f.GetValue(obj);
-            PropertyInfo p = t.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            PropertyInfo p = t.GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
             if (p != null) return p.GetValue(obj, null);
             return null;
         }

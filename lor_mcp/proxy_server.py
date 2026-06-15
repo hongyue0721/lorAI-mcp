@@ -13,14 +13,16 @@ from __future__ import annotations
 import json
 import os
 import time
-import threading
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any
 
 # ─── Paths ───
 
-GAME_DATA_DIR = Path(r"D:\steam\steamapps\common\Library Of Ruina\LibraryOfRuina_Data")
+GAME_DATA_DIR = Path(os.environ.get(
+    "LOR_GAME_DATA_DIR",
+    r"D:\steam\steamapps\common\Library Of Ruina\LibraryOfRuina_Data",
+))
 MODS_DIR = GAME_DATA_DIR / "Mods"
 STATE_DIR = MODS_DIR / "RuntimeStateExport" / "output"
 STATIC_DIR = MODS_DIR / "StaticDataExport" / "output"
@@ -210,42 +212,12 @@ class LorProxyHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Unknown POST endpoint. Only /action is supported."})
 
 
-# ─── Background state refresh ───
-
-class StateRefresher(threading.Thread):
-    """Periodically triggers the game to refresh its state export by writing a signal file."""
-
-    def __init__(self, interval: float = 2.0):
-        super().__init__(daemon=True, name="StateRefresher")
-        self.interval = interval
-        self._stop = threading.Event()
-
-    def run(self):
-        while not self._stop.is_set():
-            # Write a refresh signal file that UpdateHook can detect
-            # This causes the game to re-export full_state.json on its next Update tick
-            signal_file = STATE_DIR / "_refresh_signal.json"
-            try:
-                with open(signal_file, "w", encoding="utf-8") as f:
-                    json.dump({"t": time.time()}, f)
-            except OSError:
-                pass
-            self._stop.wait(self.interval)
-
-    def stop(self):
-        self._stop.set()
-
-
 # ─── Main ───
 
 def main():
     print(f"[LOR Proxy] Starting HTTP proxy server on port {PORT}")
     print(f"[LOR Proxy] State dir: {STATE_DIR}")
     print(f"[LOR Proxy] Static dir: {STATIC_DIR}")
-
-    # Start state refresher in background
-    refresher = StateRefresher(interval=1.0)
-    refresher.start()
 
     server = HTTPServer(("127.0.0.1", PORT), LorProxyHandler)
     print(f"[LOR Proxy] Listening on http://127.0.0.1:{PORT}")
@@ -255,7 +227,6 @@ def main():
     except KeyboardInterrupt:
         print("[LOR Proxy] Shutting down...")
     server.server_close()
-    refresher.stop()
 
 
 if __name__ == "__main__":

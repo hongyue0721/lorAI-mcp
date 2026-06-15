@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Text;
 using UnityEngine;
@@ -138,19 +139,25 @@ namespace LorAIHost
                 };
 
                 try { response["state"] = StateExporter.ExportFullState(); }
-                catch { }
+                catch (Exception ex) { Debug.LogWarning("[LorAI] Deferred state export failed: " + ex.Message); }
 
                 // Send HTTP response
                 try
                 {
                     RespondDeferred(item.Response, 200, response);
                 }
-                catch { }
+                catch (Exception ex) { Debug.LogWarning("[LorAI] Deferred response failed: " + ex.Message); }
 
-                // Archive result for /action-status polling
+                // Archive result for /action-status polling (cap at 50 to prevent leak)
                 lock (_deferLock)
                 {
                     _deferredResults[reqId] = resultData;
+                    if (_deferredResults.Count > 50)
+                    {
+                        // Remove oldest entries (first added)
+                        var oldest = _deferredResults.Keys.First();
+                        _deferredResults.Remove(oldest);
+                    }
                 }
             }
         }

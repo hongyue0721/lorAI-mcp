@@ -31,13 +31,13 @@ An MCP (Model Context Protocol) server + in-game C# mod that lets AI agents play
 |---|---|
 | Steam | 安装 *Library of Ruina* (1.1.0.6a13) |
 | Python | 3.10+ |
-| .NET SDK | 4.7.2 兼容（Visual Studio Build Tools 或 .NET SDK） |
+| .NET Framework | 4.7.2 Developer Pack（或 Visual Studio Build Tools） |
 | [BaseMod](https://github.com/USay560828/LoRBaseMod) | 游戏内 Mod 加载器 |
 
 ### Step 1: 安装 MCP Server
 
 ```bash
-pip install lor-mcp-server
+pip install git+https://github.com/hongyue0721/lorAI-mcp.git
 ```
 
 ### Step 2: 配置 MCP（一键自动）
@@ -56,7 +56,7 @@ lor-mcp-setup
 | Claude Code | `.mcp.json`（项目目录） |
 | Claude Desktop | `claude_desktop_config.json` |
 | Cursor | `.cursor/mcp.json`（项目目录） |
-| Windsurf | `mcp_config.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
 | Cline (VS Code) | `cline_mcp_settings.json` |
 
 > `lor-mcp-setup` 会自动检测哪些客户端已安装，只写入检测到的。也可以手动指定：
@@ -103,11 +103,11 @@ curl http://localhost:17127/health
 
 ## 给 AI Agent 的指令
 
-把下面这段话发给任意支持 MCP 的 AI 客户端（kimi-code / Claude Code / OpenCode / Cursor 等），它会自动完成安装和配置：
+把下面这段话发给任意支持 MCP 的 AI 客户端（kimi-code / Claude Code / Cursor 等），它会自动完成安装和配置：
 
 ```
 帮我安装并配置 Library of Ruina 的 MCP server。执行以下步骤：
-1. 运行 pip install lor-mcp-server
+1. 运行 pip install git+https://github.com/hongyue0721/lorAI-mcp.git
 2. 运行 lor-mcp-setup（自动注册到你的 MCP 配置）
 3. 完成后告诉我需要重启客户端才能生效
 ```
@@ -119,11 +119,12 @@ curl http://localhost:17127/health
 ```
 lorAI-mcp/
 ├── lor_mcp/                   # Python MCP Server
-│   ├── server.py              # FastMCP 入口 + 基础 tools
+│   ├── server.py              # FastMCP 入口 + 基础 tools（health/state/static/act）
 │   ├── tools.py               # Guided tools（战斗自动化）
 │   ├── setup.py               # MCP 一键注册脚本（lor-mcp-setup）
-│   ├── config.py              # 配置
-│   └── state.py               # 状态模型
+│   ├── config.py              # 环境变量配置
+│   ├── proxy_server.py        # Python HTTP 代理（C# bridge 不可用时的回退）
+│   └── __init__.py
 ├── LorAIHost/                 # C# Mod（HTTP bridge + 状态导出 + 战斗自动化）
 │   ├── LorAIHostMod.cs        # ModInitializer 入口
 │   ├── HttpServer.cs          # HTTP 服务（端口 17127）
@@ -140,7 +141,7 @@ lorAI-mcp/
 │   ├── StageModInfo.xml       # Mod 元数据
 │   └── LorAIHost.csproj
 ├── pyproject.toml
-└── requirements.txt
+└── README.md
 ```
 
 ---
@@ -153,12 +154,14 @@ lorAI-mcp/
 |---|---|
 | `health_check` | 检查 bridge 是否在线 |
 | `get_game_state` | 完整游戏状态（navigation/battle/stages/inventory） |
+| `get_state_layer` | 获取状态的某一层（navigation/battle 等） |
 | `get_battle_units` | 所有战斗单位详情（HP/骰子/手牌/buff） |
 | `get_emotion_candidates` | 当前可选的情绪卡列表（index/name/state/level） |
 | `get_stage_info` | 指定关卡信息 |
-| `get_state_layer` | 获取状态的某一层（navigation/battle 等） |
 | `get_static_data_list` | 列出静态数据文件 |
 | `get_game_data_item` | 查询单个游戏数据（卡牌/书籍/敌人） |
+| `get_game_data_items` | 批量查询游戏数据（逗号分隔 ID） |
+| `get_action_status` | 检查 deferred action 完成状态 |
 
 ### 战斗（Write）
 
@@ -178,6 +181,12 @@ lorAI-mcp/
 | `skip_story` | 跳过剧情 |
 | `click_battle_result` | 点击战斗结算 |
 | `close_battle_scene` | 关闭战斗场景回主界面 |
+
+### 通用 Action
+
+| 工具 | 说明 |
+|---|---|
+| `act` | 通用 action 分发器（可调用所有底层 action） |
 
 ### 调试（Debug）
 
@@ -219,12 +228,22 @@ EndBattle / 回到 RoundStartPhase_UI
 
 通过 `POST http://localhost:17127/action` 调用：
 
-### 基础 Action
+### 导航 Action
 
 | Action | 参数 | 说明 |
 |---|---|---|
 | `navigate` | phase | 导航 UI 界面 |
+| `selectSephirah` | sephirah | 选择 Sephirah 楼层 |
+| `getFloor` | sephirah | 获取楼层信息 |
 | `startGame` | - | 点击标题 Continue |
+
+### 战斗 Action
+
+| Action | 参数 | 说明 |
+|---|---|---|
+| `startStage` | stageId | 在邀请面板上设置关卡 |
+| `runStage` | stageId | 完整流程：导航→邀请→开战→autoPlay |
+| `prepareBattle` | stageId | 自动选 HP 最高的书 + PrepareBattle |
 | `startBattle` | - | 从 BattleSetting 开始战斗 |
 | `autoPlay` | - | 游戏自带自动出牌 |
 | `playBattleRound` | - | autoPlay + confirm 一步到位 |
@@ -232,20 +251,34 @@ EndBattle / 回到 RoundStartPhase_UI
 | `endBattle` | - | 结束战斗 |
 | `closeBattleScene` | - | 关闭战斗场景 |
 | `clickBattleResult` | - | 点击结算画面 |
-| `skipStory` | - | 跳过剧情 |
+| `gameOver` | isWin, isBackButton | 触发 GameOver |
 | `killAllEnemy` | - | 秒杀全部敌人 |
 | `getStageInfo` | stageId | 获取关卡信息 |
-| `callMethod` | type, method, args | 反射调用任意方法 |
 
 ### 高级 Action
 
 | Action | 参数 | 说明 |
 |---|---|---|
-| `prepareBattle` | stageId | 自动选 HP 最高的 5 本书 + PrepareBattle |
 | `getBattleUnits` | - | 导出所有战斗单位数据 |
 | `getEmotionCandidates` | - | 获取情绪卡候选列表 |
 | `selectEmotionCard` | index | 按索引选情绪卡，自动处理 SelectOne |
 | `forceAdvancePhase` | phase | 强制推进卡住的 phase |
+
+### 剧情 Action
+
+| Action | 参数 | 说明 |
+|---|---|---|
+| `skipStory` | - | 跳过剧情 |
+| `endStory` | forcely | 结束剧情 |
+| `advanceStory` | - | 推进剧情 |
+
+### 调试 Action
+
+| Action | 参数 | 说明 |
+|---|---|---|
+| `listMethods` | type | 列出类型的所有方法 |
+| `callMethod` | type, method, args | 反射调用任意方法 |
+| `getGameState` | - | 诊断 singleton 状态 |
 
 ---
 
@@ -256,7 +289,9 @@ EndBattle / 回到 RoundStartPhase_UI
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `LOR_API_BASE_URL` | `http://localhost:17127` | 游戏 bridge 地址 |
+| `LOR_PROXY_FALLBACK_URL` | `http://localhost:17128` | Python 代理回退地址 |
 | `LOR_MCP_TOOL_PROFILE` | `guided` | 工具集（`guided` 加载战斗自动化 tools） |
+| `LOR_GAME_DATA_DIR` | *(硬编码 Steam 路径)* | 代理服务器的游戏数据目录 |
 
 ---
 

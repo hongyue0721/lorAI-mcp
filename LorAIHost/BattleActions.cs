@@ -82,11 +82,17 @@ namespace LorAIHost
             if (invPanel == null)
             {
                 result["error"] = "UIInvitationPanel not found after 2s wait";
-                goto done;
+                ArchiveResult(reqId, result);
+                yield break;
             }
 
             try { invPanel.SetCurrentStage(stageInfo); }
-            catch (Exception ex) { result["error"] = "SetCurrentStage failed: " + ex.Message; goto done; }
+            catch (Exception ex)
+            {
+                result["error"] = "SetCurrentStage failed: " + ex.Message;
+                ArchiveResult(reqId, result);
+                yield break;
+            }
 
             yield return new WaitForSeconds(1f);
 
@@ -121,17 +127,22 @@ namespace LorAIHost
                     // Send invitation
                     rightPanel.OnClickSendButton();
                 }
-                catch (Exception ex) { result["error"] = "Invitation setup failed: " + ex.Message; goto done; }
+                catch (Exception ex)
+                {
+                    result["error"] = "Invitation setup failed: " + ex.Message;
+                    ArchiveResult(reqId, result);
+                    yield break;
+                }
             }
 
             yield return new WaitForSeconds(2f);
 
             // Skip story
             try { StoryActions.DoSkipStory(new Dictionary<string, object>()); }
-            catch { }
+            catch (Exception ex) { Debug.LogWarning("[LorAI] runStage skipStory #1: " + ex.Message); }
             yield return new WaitForSeconds(2f);
             try { StoryActions.DoSkipStory(new Dictionary<string, object>()); }
-            catch { }
+            catch (Exception ex) { Debug.LogWarning("[LorAI] runStage skipStory #2: " + ex.Message); }
             yield return new WaitForSeconds(1f);
 
             // Start battle
@@ -147,18 +158,27 @@ namespace LorAIHost
                     Singleton<StageController>.Instance.StartBattle();
                 }
             }
-            catch (Exception ex) { result["error"] = "Start battle failed: " + ex.Message; goto done; }
+            catch (Exception ex)
+            {
+                result["error"] = "Start battle failed: " + ex.Message;
+                ArchiveResult(reqId, result);
+                yield break;
+            }
 
             yield return new WaitForSeconds(1f);
 
             // Auto play first round
             try { DoAutoPlay(new Dictionary<string, object>()); }
-            catch { }
+            catch (Exception ex) { Debug.LogWarning("[LorAI] runStage autoPlay: " + ex.Message); }
 
             result["success"] = true;
             result["message"] = $"runStage completed for stage {stageId}";
 
-            done:
+            ArchiveResult(reqId, result);
+        }
+
+        private static void ArchiveResult(string reqId, Dictionary<string, object> result)
+        {
             lock (UpdateHook._deferLock)
             {
                 UpdateHook._deferredResults[reqId] = result;
@@ -176,7 +196,9 @@ namespace LorAIHost
                 return Success("Battle started via UIBattleSettingPanel");
             }
 
-            Singleton<StageController>.Instance.StartBattle();
+            var stageCtrl = Singleton<StageController>.Instance;
+            if (stageCtrl == null) return Error("StageController.Instance is null");
+            stageCtrl.StartBattle();
             return Success("Battle started via StageController");
         }
 
