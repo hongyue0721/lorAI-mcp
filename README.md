@@ -19,15 +19,26 @@ AI Agent  ←MCP→  Python Server  ←HTTP→  C# Mod (in-game)
 > 按照以下安装指南安装和配置 LorAI MCP：
 > https://raw.githubusercontent.com/hongyue0721/lorAI-mcp/refs/heads/master/docs/guide/installation.md
 >
-> 或者直接阅读安装指南——但我们强烈建议让智能体来处理。人会犯错，智能体不会。
+> 安装完成后，用 health_check 工具验证 MCP 连通。
 
-### 面向 LLM 智能体
+### 面向 LLM 智能体（快速安装）
 
-获取安装指南并按照说明操作：
+一键安装 Python + 注册 MCP + 下载 Mod 文件：
 
 ```bash
-curl -s https://raw.githubusercontent.com/hongyue0721/lorAI-mcp/refs/heads/master/docs/guide/installation.md
+# 1. 安装 Python MCP Server
+pip install --user git+https://github.com/hongyue0721/lorAI-mcp.git
+
+# 2. 注册到当前 AI 客户端
+lor-mcp-setup
+
+# 3. 下载 Mod DLL（需要 gh CLI 或手动从 Releases 页面下载）
+gh release download v0.1.0 --repo hongyue0721/lorAI-mcp --dir /tmp/lorai-mods
 ```
+
+然后将下载的文件复制到游戏 Mods 目录（路径见安装指南）。
+
+完整步骤见 [安装指南](docs/guide/installation.md)。
 
 ### 卸载
 

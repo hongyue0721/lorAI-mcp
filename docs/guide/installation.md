@@ -48,14 +48,18 @@ ls "<游戏路径>/LaunchWithMod.bat"
 
 如果 `LaunchWithMod.bat` 不存在，告知用户需要先安装 [BaseMod](https://github.com/USay560828/LoRBaseMod)，然后停止。
 
-### 5. 检查 Mod 是否已部署
+### 检查 Mod 是否已部署
+
+**需要两个 Mod：LorAIHost（HTTP bridge）和 StaticDataExport（静态数据导出）。**
 
 ```bash
 ls "<游戏路径>/LibraryOfRuina_Data/Mods/LorAIHost/Assemblies/LorAIHost.dll"
 ls "<游戏路径>/LibraryOfRuina_Data/Mods/LorAIHost/StageModInfo.xml"
+ls "<游戏路径>/LibraryOfRuina_Data/Mods/StaticDataExport/Assemblies/StaticDataExport.dll"
+ls "<游戏路径>/LibraryOfRuina_Data/Mods/StaticDataExport/StageModInfo.xml"
 ```
 
-如果文件已存在，跳过 Step 3。
+如果全部文件已存在，跳过 Step 3。
 
 ---
 
@@ -107,21 +111,32 @@ python -m lor_mcp.setup
 
 ## Step 3: 部署 C# Mod 到游戏
 
-**如果 `Mods/LorAIHost/Assemblies/LorAIHost.dll` 已存在，跳过此步骤。**
+**如果 `Mods/LorAIHost/Assemblies/LorAIHost.dll` 和 `Mods/StaticDataExport/Assemblies/StaticDataExport.dll` 都已存在，跳过此步骤。**
+
+需要部署两个 Mod：**LorAIHost**（HTTP bridge + 战斗自动化）和 **StaticDataExport**（静态数据导出，卡牌/书籍/敌人等查询依赖它）。
 
 ### 方式一：下载预编译 Release（推荐）
 
-1. 从 [Releases 页面](https://github.com/hongyue0721/lorAI-mcp/releases) 下载最新的 `LorAIHost.dll` 和 `StageModInfo.xml`
-2. 找到游戏安装目录
+1. 从 [Releases 页面](https://github.com/hongyue0721/lorAI-mcp/releases/tag/v0.1.0) 下载以下文件：
+   - `LorAIHost.dll`
+   - `LorAIHost_StageModInfo.xml`
+   - `StaticDataExport.dll`
+   - `StaticDataExport_StageModInfo.xml`
+2. 找到游戏安装目录（参考前置条件检查中的路径）
 3. 创建目录结构并复制文件：
 
-```
-LibraryOfRuina_Data/
-  Mods/
-    LorAIHost/
-      Assemblies/
-        LorAIHost.dll      ← 复制到这里
-      StageModInfo.xml      ← 复制到这里
+```bash
+GAME_DIR="<游戏路径>"  # 例如 D:/steam/steamapps/common/Library Of Ruina
+
+# LorAIHost
+mkdir -p "$GAME_DIR/LibraryOfRuina_Data/Mods/LorAIHost/Assemblies"
+cp LorAIHost.dll "$GAME_DIR/LibraryOfRuina_Data/Mods/LorAIHost/Assemblies/"
+cp LorAIHost_StageModInfo.xml "$GAME_DIR/LibraryOfRuina_Data/Mods/LorAIHost/StageModInfo.xml"
+
+# StaticDataExport
+mkdir -p "$GAME_DIR/LibraryOfRuina_Data/Mods/StaticDataExport/Assemblies"
+cp StaticDataExport.dll "$GAME_DIR/LibraryOfRuina_Data/Mods/StaticDataExport/Assemblies/"
+cp StaticDataExport_StageModInfo.xml "$GAME_DIR/LibraryOfRuina_Data/Mods/StaticDataExport/StageModInfo.xml"
 ```
 
 ### 方式二：从源码编译
@@ -137,7 +152,7 @@ cd lorAI-mcp/LorAIHost
 <GameDir>D:\steam\steamapps\common\Library Of Ruina</GameDir>
 ```
 
-编译并部署：
+编译并部署（两个 Mod 都需要）：
 
 ```bash
 dotnet build -c Release
@@ -150,6 +165,10 @@ GAME_DIR="<用户的游戏路径>"
 mkdir -p "$GAME_DIR/LibraryOfRuina_Data/Mods/LorAIHost/Assemblies"
 cp bin/Release/LorAIHost.dll "$GAME_DIR/LibraryOfRuina_Data/Mods/LorAIHost/Assemblies/"
 cp StageModInfo.xml "$GAME_DIR/LibraryOfRuina_Data/Mods/LorAIHost/"
+
+# StaticDataExport 也在仓库中（预编译）
+mkdir -p "$GAME_DIR/LibraryOfRuina_Data/Mods/StaticDataExport/Assemblies"
+# StaticDataExport.dll 需从游戏现有 Mods 目录复制或从 Releases 下载
 ```
 
 ---
