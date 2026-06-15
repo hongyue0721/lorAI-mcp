@@ -16,29 +16,20 @@ AI Agent  ←MCP→  Python Server  ←HTTP→  C# Mod (in-game)
 
 复制以下提示并粘贴到你的 LLM 智能体（kimi-code、Claude Code、Cursor 等）：
 
-> 按照以下安装指南安装和配置 LorAI MCP：
+> 按照以下安装指南安装和配置 LorAI MCP，游戏安装路径是：<填你的游戏路径，例如 D:\steam\steamapps\common\Library Of Ruina>
 > https://raw.githubusercontent.com/hongyue0721/lorAI-mcp/refs/heads/master/docs/guide/installation.md
 >
 > 安装完成后，用 health_check 工具验证 MCP 连通。
 
-### 面向 LLM 智能体（快速安装）
+### 面向 LLM 智能体
 
-一键安装 Python + 注册 MCP + 下载 Mod 文件：
+获取安装指南并按照说明操作。**第一步：向用户询问 Library of Ruina 的游戏安装路径**。
 
 ```bash
-# 1. 安装 Python MCP Server
-pip install --user git+https://github.com/hongyue0721/lorAI-mcp.git
-
-# 2. 注册到当前 AI 客户端
-lor-mcp-setup
-
-# 3. 下载 Mod DLL（需要 gh CLI 或手动从 Releases 页面下载）
-gh release download v0.1.0 --repo hongyue0721/lorAI-mcp --dir /tmp/lorai-mods
+curl -s https://raw.githubusercontent.com/hongyue0721/lorAI-mcp/refs/heads/master/docs/guide/installation.md
 ```
 
-然后将下载的文件复制到游戏 Mods 目录（路径见安装指南）。
-
-完整步骤见 [安装指南](docs/guide/installation.md)。
+拿到路径后，安装指南中的 `<游戏路径>` 占位符全部替换为用户提供的路径。
 
 ### 卸载
 

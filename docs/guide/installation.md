@@ -4,6 +4,25 @@
 
 ---
 
+## 第零步：获取游戏路径
+
+**向用户询问 Library of Ruina 的游戏安装路径。** 不要猜测——用户的游戏可能装在任何位置。
+
+```
+请问 Library of Ruina 游戏的安装路径是什么？
+例如：D:\steam\steamapps\common\Library Of Ruina
+```
+
+获得路径后，本文档中所有 `<游戏路径>` 占位符都替换为该路径。
+
+可选验证（确认路径正确）：
+
+```bash
+ls "<游戏路径>/LibraryOfRuina.exe"
+```
+
+---
+
 ## 前置条件检查
 
 ### 1. Python 3.10+
