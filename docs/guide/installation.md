@@ -6,12 +6,56 @@
 
 ## 前置条件检查
 
-1. 确认 Python 3.10+ 已安装：`python --version`
-2. 确认 .NET Framework 4.7.2 Developer Pack 或 Visual Studio Build Tools 已安装
-3. 确认 Steam 上已安装 *Library of Ruina*
-4. 确认游戏内已安装 [BaseMod](https://github.com/USay560828/LoRBaseMod) Mod 加载器
+### 1. Python 3.10+
 
-如果任何条件不满足，告知用户需要安装什么，然后停止。
+```bash
+python --version
+```
+
+### 2. .NET Framework 4.7.2+
+
+检查注册表（Windows）：
+
+```bash
+reg query "HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" /v Release
+```
+
+Release 值 >= 528040 表示 4.8+（满足要求）。如果用户只需下载预编译 DLL 则不需要 .NET。
+
+### 3. 游戏已安装
+
+搜索游戏路径（不要假设默认 C 盘，游戏可能在 D 盘或其他位置）：
+
+```bash
+# 尝试常见位置
+ls "C:/Program Files (x86)/Steam/steamapps/common/Library Of Ruina"
+ls "D:/steam/steamapps/common/Library Of Ruina"
+# 或者搜索
+find /d/ -maxdepth 4 -name "LibraryOfRuina.exe" 2>/dev/null
+```
+
+### 4. BaseMod 已安装
+
+**重要**：BaseMod for Library of Ruina 通过修改 `Assembly-CSharp.dll` 工作，不会以独立文件夹形式出现在 Mods/ 目录中。
+
+**检测方法**：检查游戏根目录是否有 `LaunchWithMod.bat` 文件：
+
+```bash
+ls "<游戏路径>/LaunchWithMod.bat"
+```
+
+如果存在 `LaunchWithMod.bat`，说明 BaseMod 已安装。**不要在 Mods/ 文件夹中寻找 BaseMod 目录，它不在那里。**
+
+如果 `LaunchWithMod.bat` 不存在，告知用户需要先安装 [BaseMod](https://github.com/USay560828/LoRBaseMod)，然后停止。
+
+### 5. 检查 Mod 是否已部署
+
+```bash
+ls "<游戏路径>/LibraryOfRuina_Data/Mods/LorAIHost/Assemblies/LorAIHost.dll"
+ls "<游戏路径>/LibraryOfRuina_Data/Mods/LorAIHost/StageModInfo.xml"
+```
+
+如果文件已存在，跳过 Step 3。
 
 ---
 
@@ -21,12 +65,16 @@
 pip install git+https://github.com/hongyue0721/lorAI-mcp.git
 ```
 
-如果用户想从源码安装：
+如果遇到权限问题，加 `--user`：
 
 ```bash
-git clone https://github.com/hongyue0721/lorAI-mcp.git
-cd lorAI-mcp
-pip install -e .
+pip install --user git+https://github.com/hongyue0721/lorAI-mcp.git
+```
+
+### 验证安装
+
+```bash
+python -c "from lor_mcp.server import mcp; print('OK')"
 ```
 
 ---
@@ -38,6 +86,12 @@ lor-mcp-setup
 ```
 
 这个命令会自动检测已安装的 AI 客户端（kimi-code / Claude Code / Claude Desktop / Cursor / Windsurf / Cline），并写入对应的 MCP 配置。
+
+如果 `lor-mcp-setup` 命令找不到，尝试：
+
+```bash
+python -m lor_mcp.setup
+```
 
 可选参数：
 - `lor-mcp-setup --list` — 查看检测结果
@@ -51,10 +105,12 @@ lor-mcp-setup
 
 ## Step 3: 部署 C# Mod 到游戏
 
+**如果 `Mods/LorAIHost/Assemblies/LorAIHost.dll` 已存在，跳过此步骤。**
+
 ### 方式一：下载预编译 Release（推荐）
 
 1. 从 [Releases 页面](https://github.com/hongyue0721/lorAI-mcp/releases) 下载最新的 `LorAIHost.dll` 和 `StageModInfo.xml`
-2. 找到游戏安装目录（通常在 `Steam/steamapps/common/Library Of Ruina/`）
+2. 找到游戏安装目录
 3. 创建目录结构并复制文件：
 
 ```
@@ -76,7 +132,7 @@ cd lorAI-mcp/LorAIHost
 编辑 `LorAIHost.csproj`，将 `<GameDir>` 改为用户的游戏路径：
 
 ```xml
-<GameDir>C:\Program Files (x86)\Steam\steamapps\common\Library Of Ruina</GameDir>
+<GameDir>D:\steam\steamapps\common\Library Of Ruina</GameDir>
 ```
 
 编译并部署：
@@ -96,16 +152,12 @@ cp StageModInfo.xml "$GAME_DIR/LibraryOfRuina_Data/Mods/LorAIHost/"
 
 ---
 
-## Step 4: 游戏内启用 Mod
+## Step 4: 启动游戏并验证
 
-1. 从 Steam 启动 Library of Ruina
-2. 在标题画面，BaseMod 会显示 Mod 管理器
-3. 找到 **LorAIHost**，将其启用
-4. 重启游戏
-
----
-
-## Step 5: 验证连接
+1. 使用 `LaunchWithMod.bat` 启动游戏（不要直接从 Steam 启动）
+2. 等待游戏加载到标题画面
+3. 在标题画面，如果 BaseMod 显示 Mod 管理器，确认 **LorAIHost** 已启用
+4. 验证连接：
 
 ```bash
 curl http://localhost:17127/health
@@ -117,14 +169,14 @@ curl http://localhost:17127/health
 {"status":"ok","version":"1.0.0","requests":1}
 ```
 
-如果返回连接失败，检查：
-- 游戏是否已启动并加载到标题画面
-- LorAIHost Mod 是否在 BaseMod 中已启用
-- 防火墙是否阻止了 localhost:17127
+如果返回连接失败：
+- 确认游戏已通过 `LaunchWithMod.bat` 启动（不是直接从 Steam 启动）
+- 确认 LorAIHost Mod 已启用
+- 确认游戏已加载到标题画面（不是在加载画面）
 
 ---
 
-## Step 6: 重启 AI 客户端
+## Step 5: 重启 AI 客户端
 
 重启你的 AI 客户端（kimi-code / Claude Code / Cursor 等），让它加载新的 MCP 配置。
 
@@ -141,9 +193,7 @@ lor-mcp-setup --unregister
 # 2. 卸载 Python 包
 pip uninstall lor-mcp-server
 
-# 3. 游戏内禁用 LorAIHost Mod（BaseMod 管理器中操作）
-
-# 4. 可选：删除游戏目录中的 Mod 文件
+# 3. 可选：删除游戏目录中的 Mod 文件
 # rm -rf "<游戏路径>/LibraryOfRuina_Data/Mods/LorAIHost"
 ```
 
@@ -154,8 +204,9 @@ pip uninstall lor-mcp-server
 | 问题 | 解决方案 |
 |---|---|
 | `pip install` 失败 | 确认 Python 3.10+，尝试 `pip install --user` |
-| `lor-mcp-setup` 命令找不到 | 确认 Python Scripts 目录在 PATH 中 |
+| `lor-mcp-setup` 命令找不到 | 用 `python -m lor_mcp.setup` 替代 |
+| 找不到 BaseMod 目录 | BaseMod 不在 Mods/ 里，检查 `LaunchWithMod.bat` 是否存在 |
 | `dotnet build` 失败 | 检查 csproj 中 GameDir 路径是否正确 |
-| 游戏中 Mod 不显示 | 确认 BaseMod 已正确安装，检查 StageModInfo.xml 格式 |
-| health check 连接失败 | 游戏必须运行且 Mod 已启用 |
+| 游戏中 Mod 不显示 | 确认用 `LaunchWithMod.bat` 启动，不是直接 Steam 启动 |
+| health check 连接失败 | 游戏必须运行且加载到标题画面 |
 | Mod 启用后游戏崩溃 | 检查游戏版本是否为 1.1.0.6a13，查看 Player.log |
