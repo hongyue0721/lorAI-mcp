@@ -85,7 +85,9 @@ python -c "from lor_mcp.server import mcp; print('OK')"
 lor-mcp-setup
 ```
 
-这个命令会自动检测已安装的 AI 客户端（kimi-code / Claude Code / Claude Desktop / Cursor / Windsurf / Cline），并写入对应的 MCP 配置。
+这个命令会自动检测已安装的 AI 客户端（kimi-code / Claude Code / Claude Desktop / Cursor / Windsurf / Cline / OpenCode），并写入对应的 MCP 配置。
+
+OpenCode 的配置格式与其他客户端不同（使用 `mcp` 顶键 + `command` 数组格式），脚本会自动处理。
 
 如果 `lor-mcp-setup` 命令找不到，尝试：
 

@@ -39,8 +39,27 @@ APPDATA = Path(os.environ.get("APPDATA", str(HOME / "AppData" / "Roaming"))) if 
 
 # ── Server entry ──
 
-def build_entry() -> dict:
-    """Build the MCP server entry, using lor-mcp if on PATH, else python -m."""
+def build_entry(fmt: str = "standard") -> dict:
+    """Build the MCP server entry, using lor-mcp if on PATH, else python -m.
+
+    fmt="standard": {command, args, env}  (kimi, claude, cursor, etc.)
+    fmt="opencode": {command: [...], enabled, type, environment}  (opencode)
+    """
+    if fmt == "opencode":
+        if shutil.which("lor-mcp"):
+            return {
+                "command": ["lor-mcp"],
+                "enabled": True,
+                "type": "local",
+                "environment": {"LOR_API_BASE_URL": "http://localhost:17127"},
+            }
+        return {
+            "command": [sys.executable, "-m", "lor_mcp.server"],
+            "enabled": True,
+            "type": "local",
+            "environment": {"LOR_API_BASE_URL": "http://localhost:17127"},
+        }
+
     if shutil.which("lor-mcp"):
         return {
             "command": "lor-mcp",
@@ -62,8 +81,9 @@ class ClientSpec:
     id: str           # short identifier for --client flag
     name: str         # human-readable name
     path: Path        # config file path
-    top_key: str      # root key ("mcpServers" or "servers")
+    top_key: str      # root key ("mcpServers" or "servers" or "mcp")
     project_level: bool = False  # if True, writes to project dir (cwd)
+    entry_format: str = "standard"  # "standard" or "opencode"
 
 
 def _claude_desktop_path() -> Path:
@@ -85,6 +105,12 @@ def _cline_path() -> Path:
 def _windsurf_path() -> Path:
     # Windsurf uses ~/.codeium/windsurf on all platforms (not AppData)
     return HOME / ".codeium" / "windsurf" / "mcp_config.json"
+
+
+def _opencode_path() -> Path:
+    if IS_WINDOWS or IS_MACOS:
+        return HOME / ".config" / "opencode" / "opencode.json"
+    return HOME / ".config" / "opencode" / "opencode.json"
 
 
 def _get_client_specs() -> list[ClientSpec]:
@@ -128,6 +154,13 @@ def _get_client_specs() -> list[ClientSpec]:
             name="Cline (VS Code)",
             path=_cline_path(),
             top_key="mcpServers",
+        ),
+        ClientSpec(
+            id="opencode",
+            name="OpenCode",
+            path=_opencode_path(),
+            top_key="mcp",
+            entry_format="opencode",
         ),
     ]
 
@@ -238,10 +271,6 @@ def main() -> int:
         print("  Run --list to see all known client paths.")
         return 1
 
-    entry = build_entry()
-    if not shutil.which("lor-mcp"):
-        print("[lor-mcp setup] 'lor-mcp' not on PATH, using 'python -m lor_mcp.server' fallback\n")
-
     # ── Execute ──
     action = "Unregistering" if args.unregister else "Registering"
     print(f"[lor-mcp setup] {action} '{SERVER_NAME}' in {len(targets)} client(s):\n")
@@ -252,13 +281,15 @@ def main() -> int:
             if unregister_one(client):
                 success += 1
         else:
+            entry = build_entry(client.entry_format)
             if register_one(client, entry):
                 success += 1
 
     # ── Summary ──
     print(f"\n[lor-mcp setup] Done: {success}/{len(targets)} client(s) updated.")
     if not args.unregister:
-        print(f"[lor-mcp setup] Entry: {json.dumps(entry, ensure_ascii=False)}")
+        std_entry = build_entry("standard")
+        print(f"[lor-mcp setup] Entry: {json.dumps(std_entry, ensure_ascii=False)}")
     print("[lor-mcp setup] Restart the target client(s) to activate changes.")
     return 0
 
