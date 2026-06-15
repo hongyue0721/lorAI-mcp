@@ -1,153 +1,135 @@
-# 废墟图书馆类型发现指南
+# 废墟图书馆类型参考
 
-> 基于 Unity Mono + C#，通过反射和 Harmony 补丁在游戏运行时探测类型。
-> 所有类型名都需要在实际运行时验证，以下为先验推测。
-
----
-
-## 一、核心类型速查
-
-### 舞台与流程
-
-| 概念 | 推测类型 | 关键成员 |
-|---|---|---|
-| 舞台控制器 | `StageController` | `Instance`, `currentStage`, `currentFloor`, `StartStage()`, `EndOfRound()` |
-| 楼层模型 | `FloorModel` / `LibraryFloorModel` | `floorNum`, `Name`, `GetLibrarians()` |
-| 接待关卡 | `StageClassInfo` / `StageModel` | `id`, `waveList`, `floorOnly` |
-
-### 战斗单位
-
-| 概念 | 推测类型 | 关键成员 |
-|---|---|---|
-| 战斗对象管理器 | `BattleObjectManager` | `instance`, `GetList()`, `GetAliveList()` |
-| 战斗单位 | `BattleUnitModel` | `hp`, `breakGauge`, `bp`, `emotionDetail`, `cardSlotDetail`, `speedDiceResult`, `currentBehavior` |
-| 友方司书 | `BattleAllyModel` : `BattleUnitModel` | 继承 BattleUnitModel |
-| 敌方来宾 | `BattleEnemyModel` : `BattleUnitModel` | 继承 BattleUnitModel |
-
-### 速度骰与书页
-
-| 概念 | 推测类型 | 关键成员 |
-|---|---|---|
-| 速度骰 | `SpeedDice` / `BattleSpeedDice` | `value`, `isOn`, `isBlocked`, `isBreaked` |
-| 战斗书页（卡牌） | `BattleDiceCardModel` | `id`, `name`, `cost`, `abilityList`, `behaviorList` |
-| 骰子行为 | `BattleDiceBehavior` | `min`, `max`, `power`, `diceType`, `detail` |
-| 手牌槽 | `BattleAllyCardSlotDetail` | `SetField()`, `GetField()`, `hand` |
-| 当前行为 | `BattlePlayingCardDataInUnitModel` | `card`, `target`, `currentBehaviour` |
-
-### 情感与楼层
-
-| 概念 | 推测类型 | 关键成员 |
-|---|---|---|
-| 情感详情 | `BattleEmotionDetail` | `emotionLevel`, `emotionCoins`, `CreateEmotionCoin()` |
-| 情感硬币 | `EmotionCoinModel` / `BattleEmotionCoinModel` | `positive`, `xmlInfo` |
-| EGO 书页 | `EmotionCardModel` / `EgoCardModel` | `id`, `Name` |
-
-### UI 与输入
-
-| 概念 | 推测类型 | 关键成员 |
-|---|---|---|
-| 主动画状态机 | `UIAnimationManager` | - |
-| 速度骰 UI | `SpeedDiceUI` | `SetSelectable()`, `SetData()` |
-| 书页 UI | `BattleDiceCardUI` | `SetData()`, `OnClick()` |
-| 对话框 | `DialogController` / `StoryManager` | `Next()`, `IsEnd()` |
+> 基于实际运行时反射验证的类型信息。供 `callMethod` / `listMethods` 工具参考。
 
 ---
 
-## 二、发现方法
+## 核心单例
 
-### 方法 1：启动时全 Assembly 扫描
+| 类型 | 访问方式 | 用途 |
+|---|---|---|
+| `StageController` | `Singleton<StageController>.Instance` | 战斗流程控制 |
+| `BattleObjectManager` | `BattleObjectManager.instance` | 战斗单位管理 |
+| `UI.UIController` | `UI.UIController.Instance` | UI 导航控制 |
+| `LibraryModel` | `LibraryModel.Instance` | 图书馆进度数据 |
+| `GameSceneManager` | `GameSceneManager.Instance` | 场景管理 |
+| `InventoryModel` | `Singleton<InventoryModel>.Instance` | 卡牌库存 |
+| `BookInventoryModel` | `Singleton<BookInventoryModel>.Instance` | 书籍库存 |
+| `DropBookInventoryModel` | `Singleton<DropBookInventoryModel>.Instance` | 邀请书库存 |
+| `StageClassInfoList` | `Singleton<StageClassInfoList>.Instance` | 关卡数据 |
 
-```csharp
-public static class TypeScanner
-{
-    public static void Scan()
-    {
-        var keywords = new[] { "Stage", "Battle", "Dice", "Card", "Emotion", "Floor", "Speed" };
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            try
-            {
-                foreach (var type in asm.GetTypes())
-                {
-                    if (keywords.Any(k => type.Name.Contains(k)))
-                    {
-                        LogType(type);
-                    }
-                }
-            }
-            catch { }
-        }
-    }
-
-    static void LogType(Type type)
-    {
-        Logger.LogInfo($"[TYPE] {type.FullName}");
-        foreach (var f in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
-            Logger.LogInfo($"  FIELD: {f.FieldType.Name} {f.Name}");
-        foreach (var m in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
-        {
-            var ps = string.Join(", ", m.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"));
-            Logger.LogInfo($"  METHOD: {m.ReturnType.Name} {m.Name}({ps})");
-        }
-    }
-}
-```
-
-### 方法 2：Harmony 关键方法 Hook
-
-```csharp
-[HarmonyPatch(typeof(StageController), "StartStage")]
-public static class StageController_StartStage_Patch
-{
-    [HarmonyPostfix]
-    static void Postfix(StageController __instance)
-    {
-        Logger.LogInfo("[HOOK] StageController.StartStage called");
-        // 反射打印 __instance 的 public 字段值
-    }
-}
-```
-
-### 方法 3：单例类直接访问
-
-图书馆里大量 Manager 是单例，常见模式：
-
-```csharp
-StageController.Instance
-BattleObjectManager.instance
-BookInventoryModel.Instance
-UnitBookStoryModel.Instance
-```
-
-单例是最高效的入口点。
+> 注意：全局命名空间有一个 `UIController`（光照控制器），UI 控制器在 `UI` 命名空间。`ReflectionHelper.FindType` 优先返回有命名空间的类型。
 
 ---
 
-## 三、已知稳定的 Hook 点
+## StageController 关键方法
 
-以下方法在战斗中会被频繁调用，适合 Hook 做状态感知：
-
-| 方法 | 触发时机 |
+| 方法 | 说明 |
 |---|---|
-| `StageController.StartStage()` | 接待开始 |
-| `StageController.EndOfRound()` | 一回合结束 |
-| `StageController.EndBattle()` | 战斗结束 |
-| `BattleUnitModel.OnRollSpeedDice()` | 速度骰掷出后 |
-| `BattleUnitModel.OnSelectCard()` | 选卡后 |
-| `BattleUnitModel.OnDie()` | 单位死亡 |
-| `BattleDiceBehavior.GiveDamage()` | 造成伤害 |
-| `BattleEmotionDetail.LevelUp()` | 情感升级 |
+| `SkipRoundStartUI()` | 跳过回合开始动画（RoundStartPhase_UI） |
+| `StopSpeedDiceRoll()` | 推进速度骰掷骰（RoundStartPhase_System） |
+| `SetAutoCardForPlayer()` | 自动出牌 |
+| `CompleteApplyingLibrarianCardPhase(bool)` | 确认出牌 |
+| `StartBattle()` | 开始战斗 |
+| `EndBattle()` | 结束战斗 |
+| `CloseBattleScene()` | 关闭战斗场景 |
+| `KillAllEnemy()` | 秒杀全部敌人 |
 
 ---
 
-## 四、需要确认的关键问题
+## StageController.StagePhase 枚举
 
-1. `StageController` 是不是单例？访问方式是 `Instance` 还是 `instance`？
-2. `BattleObjectManager` 的单位列表字段名是什么？
-3. 速度骰的结果是存在 `BattleUnitModel.speedDiceResult` 还是单独的对象里？
-4. 手牌是 `cardSlotDetail.hand` 还是 `handSlot`？
-5. 情感硬币的正面/负面是怎么表示的？
-6. EGO 书页的选择是 UI 事件还是可以直接调用方法？
-7. 确认当前幕操作对应哪个方法？
+```
+RoundStartPhase_UI          ← 回合开始动画
+RoundStartPhase_System      ← 速度骰掷骰
+SortUnitPhase               ← 单位排序
+DrawCardPhase               ← 抽牌
+ApplyEnemyCardPhase         ← 敌人装卡
+ApplyLibrarianCardPhase     ← 玩家装卡
+ArrangeEquippedCards        ← 卡牌排序
+ActivateStartBattleEffect   ← 开战效果
+WaitStartBattleEffect
+SetCurrentDiceAction
+CheckFarAreaPlay
+ExecuteFarAreaPlay
+EndFarAreaPlay
+MoveUnits
+WaitUnitsArrive
+CheckParrying               ← 拼点
+CheckOneSideAction          ← 单方面行动
+ProcessViewAction           ← 拼点演出
+RoundEndPhase               ← 回合结束
+EndBattle                   ← 战斗结束
+EndBattle2
+```
 
-这些问题都要靠 Phase 1 的扫描和 Hook 来回答。
+---
+
+## BattleUnitModel 关键属性
+
+| 属性/字段 | 类型 | 说明 |
+|---|---|---|
+| `index` | int | 单位索引 |
+| `id` | int | 单位 ID |
+| `faction` | Faction | Player / Enemy |
+| `hp` | float | 当前 HP |
+| `MaxHp` | int | 最大 HP |
+| `breakDetail` | BreakDetail | 混乱护盾 |
+| `emotionDetail` | BattleEmotionDetail | 情感详情 |
+| `cardSlotDetail` | BattleCardSlotDetail | 出牌槽 |
+| `speedDiceResult` | List<SpeedDice> | 速度骰 |
+| `allyCardDetail` | BattleAllyCardDetail | 手牌管理 |
+| `Book` | UnitBookModel | 装备书 |
+| `UnitData` | UnitDataModel | 单位元数据 |
+
+---
+
+## 情绪卡 UI 类型
+
+| 类型 | 访问方式 | 说明 |
+|---|---|---|
+| `BattleManagerUI` | `SingletonBehavior<BattleManagerUI>.Instance` | 战斗 UI 管理 |
+| `ui_levelup` (field) | `BattleManagerUI.ui_levelup` | 情绪卡升级面板 |
+
+`ui_levelup` 关键成员：
+- `IsEnabled` (property) — 是否激活
+- `candidates` (field, object[]) — 候选卡列表
+- `OnSelectPassive(candidate)` — 选择一张卡
+- `_needUnitSelection` (field, bool) — 是否需要选目标
+- `OnClickTargetUnit(unit)` — 选择目标单位
+
+---
+
+## EmotionCardXmlInfo 字段
+
+> 注意：这些是 public **field** 不是 property。使用 `GetMemberValue()` 统一查询。
+
+| 字段 | 类型 |
+|---|---|
+| `id` | int |
+| `Name` | string |
+| `State` | enum (Positive/Negative) |
+| `EmotionLevel` | int |
+| `TargetType` | enum |
+
+---
+
+## DropBookXmlInfo vs BookXmlInfo
+
+| 类型 | 用途 | HP 获取方式 |
+|---|---|---|
+| `DropBookXmlInfo` | 邀请书（库存列表） | 无 HP 字段 |
+| `BookXmlInfo` | 实际书籍数据 | `BookXmlList.Instance.GetData(id).EquipEffect.Hp` |
+
+选书时需要通过 `DropBookXmlInfo.id` 查 `BookXmlInfo` 获取 HP 排序。
+
+---
+
+## StoryRoot 类型
+
+| 类型 | 访问方式 | 说明 |
+|---|---|---|
+| `StoryRoot` | `FindObjectOfType<StoryRoot>()` | 剧情根节点 |
+| `storyManager` (field) | `StoryRoot.storyManager` | 剧情管理器 |
+
+storyManager 方法：`SkipAll()`、`EndStory(bool)`、`ClickEvent(bool, bool)`
