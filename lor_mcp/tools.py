@@ -23,14 +23,26 @@ import httpx
 from fastmcp import FastMCP
 
 from lor_mcp.config import LOR_API_BASE_URL
-from lor_mcp.server import _get_client as _get_shared_client
 
 
-# ── HTTP helpers ──
+# ── Shared HTTP client (avoids circular import with server.py) ──
+
+_shared_client: httpx.AsyncClient | None = None
 
 async def _get_client() -> httpx.AsyncClient:
-    """Use the shared client from server.py for bridge detection + proxy fallback."""
-    return await _get_shared_client()
+    """Get the shared HTTP client.
+
+    Tries to use server.py's client (with bridge detection + proxy fallback).
+    Falls back to a direct connection if server.py isn't initialized yet.
+    """
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        try:
+            from lor_mcp.server import _get_client as _get_shared_client
+            _shared_client = await _get_shared_client()
+        except Exception:
+            _shared_client = httpx.AsyncClient(base_url=LOR_API_BASE_URL, timeout=60.0)
+    return _shared_client
 
 async def _post_action(body: dict[str, Any]) -> dict[str, Any]:
     client = await _get_client()
@@ -236,16 +248,35 @@ def register_guided_tools(mcp: FastMCP) -> None:
                     result = "defeat"
                 else:
                     result = "ended"
+                # Auto-handle battle result UI before returning
+                await asyncio.sleep(2)
+                await _safe_post({"action": "clickBattleResult"})
+                await asyncio.sleep(2)
+                await _safe_post({"action": "closeBattleScene"})
                 return {"result": result, "rounds": round_num, "phase": phase,
                         "playerAlive": player_alive, "enemyAlive": enemy_alive}
 
-            if not battle.get("inBattle") and scene != "Battle":
-                return {"result": "not_in_battle", "rounds": round_num, "phase": phase}
+            # Battle ended but phase not yet EndBattle (scene transition)
+            if not battle.get("inBattle"):
+                # Check if battle result UI is showing
+                if scene == "Battle":
+                    # Still in battle scene, might be result UI
+                    await asyncio.sleep(2)
+                    click_r = await _safe_post({"action": "clickBattleResult"})
+                    await asyncio.sleep(1)
+                    await _safe_post({"action": "closeBattleScene"})
+                    await asyncio.sleep(2)
+                return {"result": "ended", "rounds": round_num, "phase": phase,
+                        "scene": scene}
 
             # Skip stories
             if scene == "Story" or phase == "BattleStoryPhase":
                 await _safe_post({"action": "skipStory"})
+                await asyncio.sleep(1)
+                # Try advancing story multiple times (some stories need several clicks)
+                await _safe_post({"action": "advanceStory"})
                 await asyncio.sleep(2)
+                _recent_phases.clear()
                 continue
 
             # Track stuck phases (detect oscillation within a set of phases)
