@@ -63,10 +63,43 @@ namespace LorAIHost
                 if (ui == null)
                     return Error("UIController instance is null");
 
-                // Get available invitation books
+                // ── Determine max books from stage info ──
+                int maxBooks = 5;
+                if (stageInfo.stageType == StageType.Invitation && stageInfo.invitationInfo != null)
+                    maxBooks = stageInfo.invitationInfo.bookNum;
+                if (maxBooks <= 0) maxBooks = 5;
+
+                // ── Mode 1: Explicit book IDs from the LLM ──
+                if (args.TryGetValue("bookIds", out var bookIdsObj) && bookIdsObj is List<object> explicitIds)
+                {
+                    var selectedBooks = new List<DropBookXmlInfo>();
+                    foreach (var idObj in explicitIds)
+                    {
+                        try
+                        {
+                            LorId lorId = ParseLorId(idObj.ToString());
+                            DropBookXmlInfo book = DropBookXmlList.Instance.GetData(lorId);
+                            if (book != null)
+                                selectedBooks.Add(book);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning("[LorAI] prepareBattle: failed to parse bookId " + idObj + ": " + ex.Message);
+                        }
+                    }
+                    if (selectedBooks.Count > 0)
+                    {
+                        ui.PrepareBattle(stageInfo, selectedBooks);
+                        return BuildPrepareResult(stageId, selectedBooks, "explicit");
+                    }
+                    // Fall through to auto-select if explicit IDs failed
+                }
+
+                // ── Mode 2: Auto-select best books ──
+                // Get available books from invitation list first
                 List<LorId> availableBookIds = Singleton<DropBookInventoryModel>.Instance.GetBookList_invitationBookList();
-                if (availableBookIds == null || availableBookIds.Count == 0)
-                    return Error("No invitation books available");
+                if (availableBookIds == null)
+                    availableBookIds = new List<LorId>();
 
                 List<DropBookXmlInfo> candidateBooks = new List<DropBookXmlInfo>();
                 foreach (LorId bookId in availableBookIds)
@@ -76,43 +109,45 @@ namespace LorAIHost
                         candidateBooks.Add(book);
                 }
 
-                if (candidateBooks.Count == 0)
-                    return Error("No valid book data found");
-
-                // Sort by HP descending
-                candidateBooks.Sort((a, b) => GetBookHp(b).CompareTo(GetBookHp(a)));
-
-                // Determine max books from stage info, default to 5
-                int maxBooks = 5;
-                if (stageInfo.stageType == StageType.Invitation && stageInfo.invitationInfo != null)
-                    maxBooks = stageInfo.invitationInfo.bookNum;
-                maxBooks = Mathf.Min(candidateBooks.Count, maxBooks);
-                var selectedBooks = new List<DropBookXmlInfo>();
-                for (int i = 0; i < maxBooks; i++)
-                    selectedBooks.Add(candidateBooks[i]);
-
-                // Call PrepareBattle directly
-                ui.PrepareBattle(stageInfo, selectedBooks);
-
-                // Build result
-                var booksList = new List<object>();
-                foreach (var b in selectedBooks)
+                // Fallback: if invitation list is too small, use full inventory
+                if (candidateBooks.Count < Mathf.Min(maxBooks, 3))
                 {
-                    booksList.Add(new Dictionary<string, object>
+                    Debug.Log("[LorAI] prepareBattle: invitation list only had " + candidateBooks.Count
+                              + " books, falling back to full inventory");
+                    var fullList = Singleton<DropBookInventoryModel>.Instance.GetBookList();
+                    if (fullList != null)
                     {
-                        ["id"] = b.id.ToString(),
-                        ["name"] = GetBookName(b),
-                        ["hp"] = GetBookHp(b)
-                    });
+                        foreach (var dropItem in fullList)
+                        {
+                            try
+                            {
+                                // OwnDropBookModel has a public XmlInfo property (DropBookXmlInfo)
+                                DropBookXmlInfo book = ReflectionHelper.GetFieldValue(dropItem, "XmlInfo") as DropBookXmlInfo;
+                                if (book == null) continue;
+                                if (!candidateBooks.Contains(book))
+                                    candidateBooks.Add(book);
+                            }
+                            catch { }
+                        }
+                    }
                 }
 
-                return new Dictionary<string, object>
-                {
-                    ["success"] = true,
-                    ["stageId"] = stageId,
-                    ["booksSelected"] = selectedBooks.Count,
-                    ["books"] = booksList
-                };
+                if (candidateBooks.Count == 0)
+                    return Error("No valid book data found (invitation: " + availableBookIds.Count
+                                 + " books, fallback also empty)");
+
+                // ── Sort by composite score (HP, breakLife, resistances) ──
+                candidateBooks.Sort((a, b) => GetBookScore(b).CompareTo(GetBookScore(a)));
+
+                maxBooks = Mathf.Min(candidateBooks.Count, maxBooks);
+                var pickedBooks = new List<DropBookXmlInfo>();
+                for (int i = 0; i < maxBooks; i++)
+                    pickedBooks.Add(candidateBooks[i]);
+
+                // Call PrepareBattle directly
+                ui.PrepareBattle(stageInfo, pickedBooks);
+
+                return BuildPrepareResult(stageId, pickedBooks, "auto");
             }
             catch (Exception ex)
             {
@@ -123,6 +158,83 @@ namespace LorAIHost
                     ["stack"] = ex.StackTrace
                 };
             }
+        }
+
+        private static LorId ParseLorId(string s)
+        {
+            // LorId(int) constructor; handle "packageId.innerId" by taking inner ID
+            int dot = s.IndexOf('.');
+            if (dot > 0)
+                s = s.Substring(dot + 1);
+            return new LorId(int.Parse(s));
+        }
+
+        /// <summary>
+        /// Composite book score for auto-selection. Considers HP, break life,
+        /// and bookValue (rarity proxy). Uses reflection for stats that may
+        /// have different property names across game versions.
+        /// </summary>
+        private static float GetBookScore(DropBookXmlInfo book)
+        {
+            float hp = GetBookHp(book);
+
+            // bookValue is a known public field on DropBookXmlInfo — acts as rarity/quality proxy
+            int bookValue = 0;
+            try { bookValue = book.bookvalue; } catch { }
+
+            // Try to get breakLife via reflection from BookXmlInfo
+            int breakLife = 0;
+            try
+            {
+                BookXmlInfo bookXml = BookXmlList.Instance.GetData(book.id);
+                if (bookXml != null && !bookXml.isError)
+                {
+                    var be = bookXml.EquipEffect;
+                    if (be != null)
+                    {
+                        // Try various possible names
+                        breakLife = Convert.ToInt32(
+                            ReflectionHelper.GetFieldValue(be, "BreakLife")
+                            ?? ReflectionHelper.GetFieldValue(be, "breakLife")
+                            ?? 0);
+                    }
+                }
+            }
+            catch { }
+
+            float score = hp * 10f
+                        + breakLife * 15f
+                        + bookValue * 2f;
+
+            // Big bonus for books with HP >= 50 (real combat books vs basic 30HP pages)
+            if (hp >= 50) score += 200f;
+
+            return score;
+        }
+
+        private static Dictionary<string, object> BuildPrepareResult(
+            int stageId, List<DropBookXmlInfo> selected, string mode)
+        {
+            var booksList = new List<object>();
+            foreach (var b in selected)
+            {
+                booksList.Add(new Dictionary<string, object>
+                {
+                    ["id"] = b.id.ToString(),
+                    ["name"] = GetBookName(b),
+                    ["hp"] = GetBookHp(b),
+                    ["score"] = Math.Round(GetBookScore(b), 1)
+                });
+            }
+
+            return new Dictionary<string, object>
+            {
+                ["success"] = true,
+                ["stageId"] = stageId,
+                ["mode"] = mode,
+                ["booksSelected"] = selected.Count,
+                ["books"] = booksList
+            };
         }
 
         // ─────────────────────────────────────────────────────────────
@@ -349,7 +461,10 @@ namespace LorAIHost
 
                 switch (phaseToMatch)
                 {
-                    // Round start phases (missing before)
+                    // Battle story (intro/mid/outro cutscenes in suppression battles)
+                    case "BattleStoryPhase":
+                        targetPhase = "RoundStartPhase_UI"; break;
+                    // Round start phases
                     case "RoundStartPhase_UI":
                         targetPhase = "RoundStartPhase_System"; break;
                     case "RoundStartPhase_System":
@@ -385,6 +500,8 @@ namespace LorAIHost
                         targetPhase = "ProcessViewAction"; break;
                     case "ProcessViewAction":
                         targetPhase = "RoundEndPhase"; break;
+                    case "RoundEndPhase":
+                        targetPhase = "EndBattle"; break;
                     default:
                         return new Dictionary<string, object>
                         {

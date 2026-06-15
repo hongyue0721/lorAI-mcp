@@ -207,8 +207,19 @@ namespace LorAIHost
         {
             var stageCtrl = Singleton<StageController>.Instance;
             if (stageCtrl == null) return Error("StageController not found");
-            stageCtrl.SetAutoCardForPlayer();
-            return Success("AutoPlay executed");
+            try
+            {
+                stageCtrl.SetAutoCardForPlayer();
+                return Success("AutoPlay executed");
+            }
+            catch (Exception ex)
+            {
+                return new Dictionary<string, object>
+                {
+                    ["success"] = false,
+                    ["error"] = "SetAutoCardForPlayer failed: " + ex.Message
+                };
+            }
         }
 
         // confirmCards: confirm card placement and advance round
@@ -246,10 +257,56 @@ namespace LorAIHost
                 };
             }
 
-            // Auto play
-            stageCtrl.SetAutoCardForPlayer();
+            // Check that players exist and have hand cards before auto-placing
+            try
+            {
+                var bom = BattleObjectManager.instance;
+                if (bom != null)
+                {
+                    var players = bom.GetList(Faction.Player);
+                    if (players == null || players.Count == 0)
+                    {
+                        return new Dictionary<string, object>
+                        {
+                            ["success"] = true,
+                            ["acted"] = false,
+                            ["phase"] = phaseStr,
+                            ["message"] = "No player units in battle, skipping autoPlay"
+                        };
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[LorAI] playBattleRound: player check failed: " + ex.Message);
+            }
+
+            // Auto play (wrapped in try/catch — SetAutoCardForPlayer can throw
+            // NullReferenceException if a player's hand is empty or dice are broken)
+            try
+            {
+                stageCtrl.SetAutoCardForPlayer();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[LorAI] SetAutoCardForPlayer failed: " + ex.Message);
+                // Still try to confirm — some cards may have been placed
+            }
+
             // Confirm
-            stageCtrl.CompleteApplyingLibrarianCardPhase(false);
+            try
+            {
+                stageCtrl.CompleteApplyingLibrarianCardPhase(false);
+            }
+            catch (Exception ex)
+            {
+                return new Dictionary<string, object>
+                {
+                    ["success"] = false,
+                    ["error"] = "ConfirmCards failed: " + ex.Message,
+                    ["phase"] = phaseStr
+                };
+            }
 
             return new Dictionary<string, object>
             {

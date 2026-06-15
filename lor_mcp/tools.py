@@ -156,25 +156,31 @@ def register_guided_tools(mcp: FastMCP) -> None:
         return await _post_action({"action": "navigate", "phase": phase})
 
     @mcp.tool()
-    async def start_battle(stage_id: int, wait_seconds: int = 40) -> dict[str, Any]:
+    async def start_battle(stage_id: int, wait_seconds: int = 40,
+                           book_ids: list[int] | None = None) -> dict[str, Any]:
         """Start a battle for the given stage with automatic book selection.
 
         Flow: navigate Invitation -> prepareBattle (auto-selects best books
-        by HP) -> wait for BattleSetting -> startBattle -> wait for Battle.
+        by composite score: HP + breakLife + resistances) -> wait for
+        BattleSetting -> startBattle -> wait for Battle.
 
-        The LLM should call this after deciding which stage to play,
-        then call battle_loop to auto-play the combat.
+        For high-difficulty stages where auto-selection picks bad books,
+        pass explicit book_ids to override auto-selection.
 
         Args:
             stage_id: Stage ID (e.g. 1, 2, 10001).
             wait_seconds: Max seconds to wait for battle to start.
+            book_ids: Optional list of explicit book IDs to use. If None,
+                      auto-selects the best books from available inventory.
         """
         await _safe_post({"action": "navigate", "phase": "Invitation"})
         await asyncio.sleep(2)
 
-        result = _result(await _safe_post({
-            "action": "prepareBattle", "stageId": stage_id,
-        }))
+        prep_body: dict[str, Any] = {"action": "prepareBattle", "stageId": stage_id}
+        if book_ids:
+            prep_body["bookIds"] = [str(bid) for bid in book_ids]
+
+        result = _result(await _safe_post(prep_body))
         if not result.get("success", True):
             return {"success": False, "error": result.get("error", "unknown")}
 
@@ -194,7 +200,15 @@ def register_guided_tools(mcp: FastMCP) -> None:
             scene = nav.get("activeScene", "")
 
             if bstate == "Battle":
-                return {"success": True, "phase": battle.get("phase")}
+                battle_phase = battle.get("phase", "")
+                # If in BattleStoryPhase, try to skip it first
+                if battle_phase == "BattleStoryPhase":
+                    await _safe_post({"action": "skipStory"})
+                    await asyncio.sleep(1)
+                    await _safe_post({"action": "forceAdvancePhase", "phase": "BattleStoryPhase"})
+                    await asyncio.sleep(2)
+                    continue
+                return {"success": True, "phase": battle_phase}
 
             if phase == "BattleSetting" or bstate == "Setting":
                 await _safe_post({"action": "startBattle"})
@@ -215,7 +229,8 @@ def register_guided_tools(mcp: FastMCP) -> None:
         """Auto-play through an entire battle until it ends.
 
         Handles: round-start dice, auto card placement, emotion card
-        selection, phase stuck detection, and story skips.
+        selection, phase stuck detection, and story skips (including
+        BattleStoryPhase in suppression battles).
 
         Emotion card strategy: calls get_emotion_candidates, picks the
         Positive card with highest emotionLevel. For smarter selection,
@@ -223,8 +238,6 @@ def register_guided_tools(mcp: FastMCP) -> None:
 
         Returns {"result": "victory"|"timeout"|"not_in_battle", "rounds": N}.
         """
-        stuck_phase = ""
-        stuck_count = 0
         _recent_phases: list[str] = []
 
         for round_num in range(max_rounds):
@@ -237,8 +250,9 @@ def register_guided_tools(mcp: FastMCP) -> None:
             nav = state.get("navigation", {})
             phase = battle.get("phase", "")
             scene = nav.get("activeScene", "")
+            in_battle = battle.get("inBattle", False)
 
-            # Victory / Defeat
+            # ── 1. Victory / Defeat ──
             if phase in ("EndBattle", "EndBattle2"):
                 player_alive = battle.get("playerAliveCount", 0)
                 enemy_alive = battle.get("enemyAliveCount", 0)
@@ -248,7 +262,6 @@ def register_guided_tools(mcp: FastMCP) -> None:
                     result = "defeat"
                 else:
                     result = "ended"
-                # Auto-handle battle result UI before returning
                 await asyncio.sleep(2)
                 await _safe_post({"action": "clickBattleResult"})
                 await asyncio.sleep(2)
@@ -256,71 +269,71 @@ def register_guided_tools(mcp: FastMCP) -> None:
                 return {"result": result, "rounds": round_num, "phase": phase,
                         "playerAlive": player_alive, "enemyAlive": enemy_alive}
 
-            # Battle ended but phase not yet EndBattle (scene transition)
-            if not battle.get("inBattle"):
-                # Check if battle result UI is showing
+            # ── 2. Battle ended but phase not yet EndBattle ──
+            if not in_battle:
                 if scene == "Battle":
-                    # Still in battle scene, might be result UI
                     await asyncio.sleep(2)
-                    click_r = await _safe_post({"action": "clickBattleResult"})
+                    await _safe_post({"action": "clickBattleResult"})
                     await asyncio.sleep(1)
                     await _safe_post({"action": "closeBattleScene"})
                     await asyncio.sleep(2)
                 return {"result": "ended", "rounds": round_num, "phase": phase,
                         "scene": scene}
 
-            # Skip stories
+            # ── 3. Story phases (overworld + battle story) ──
+            # BattleStoryPhase appears in suppression battles (70001+) and
+            # other boss fights. skipStory now tries SkipAll → EndStory →
+            # forceAdvancePhase internally, so a single call covers all.
             if scene == "Story" or phase == "BattleStoryPhase":
                 await _safe_post({"action": "skipStory"})
                 await asyncio.sleep(1)
-                # Try advancing story multiple times (some stories need several clicks)
+                # Backup: try advanceStory and forceAdvancePhase
                 await _safe_post({"action": "advanceStory"})
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
+                # Check if still stuck in BattleStoryPhase
+                check = await _get_state()
+                check_phase = check.get("battle", {}).get("phase", "") if check else ""
+                if check_phase == "BattleStoryPhase":
+                    await _safe_post({"action": "forceAdvancePhase", "phase": "BattleStoryPhase"})
+                    await asyncio.sleep(2)
                 _recent_phases.clear()
                 continue
 
-            # Track stuck phases (detect oscillation within a set of phases)
-            _recent_phases.append(phase)
-            if len(_recent_phases) > 6:
-                _recent_phases.pop(0)
-            # If the last 6 phases are cycling through the same 1-3 phases, we're stuck
-            unique_recent = set(_recent_phases)
-            if phase in unique_recent and len(_recent_phases) >= 4:
-                phase_counts = {}
-                for p in _recent_phases:
-                    phase_counts[p] = phase_counts.get(p, 0) + 1
-                # If any single phase appeared 3+ times in last 6 iterations
-                stuck_count = max(phase_counts.values()) if phase_counts else 0
-            else:
-                stuck_count = 0
-
-            # RoundEndPhase: emotion card selection
+            # ── 4. RoundEndPhase: emotion card selection ──
+            # Check immediately for emotion UI — don't wait for stuck detection.
+            # The game shows emotion cards during RoundEndPhase.
             if phase == "RoundEndPhase":
-                if stuck_count >= 2:
-                    # Check if emotion UI is actually active before selecting
-                    emo_result = _result(await _safe_post({"action": "getEmotionCandidates"}))
-                    if isinstance(emo_result, dict) and emo_result.get("active"):
-                        best_idx = await _pick_best_emotion_card()
+                emo = _result(await _safe_post({"action": "getEmotionCandidates"}))
+                if isinstance(emo, dict) and emo.get("active"):
+                    cards = emo.get("candidates", [])
+                    if cards:
+                        best_idx = _pick_best_from_candidates(cards)
                         await _safe_post({"action": "selectEmotionCard", "index": best_idx})
                         await asyncio.sleep(2)
                         _recent_phases.clear()
                         continue
-                    # No emotion UI active, try force-advance
-                    await _safe_post({"action": "forceAdvancePhase", "phase": phase})
+                # No emotion UI active — wait for game to process round end
+                await asyncio.sleep(3)
+                # Check again; if still stuck, force-advance
+                check = await _get_state()
+                check_phase = check.get("battle", {}).get("phase", "") if check else ""
+                if check_phase == "RoundEndPhase":
+                    await _safe_post({"action": "forceAdvancePhase", "phase": "RoundEndPhase"})
                     await asyncio.sleep(2)
                     _recent_phases.clear()
-                    continue
-                await asyncio.sleep(3)
                 continue
 
-            # Force-advance stuck phases (ArrangeEquippedCards etc.)
-            if stuck_count >= 3:
+            # ── 5. Stuck detection (simplified) ──
+            _recent_phases.append(phase)
+            if len(_recent_phases) > 5:
+                _recent_phases.pop(0)
+            if _recent_phases.count(phase) >= 3:
                 await _safe_post({"action": "forceAdvancePhase", "phase": phase})
                 await asyncio.sleep(2)
                 _recent_phases.clear()
                 continue
 
-            # Round start phases
+            # ── 6. Round start phases ──
             if phase == "RoundStartPhase_UI":
                 await _safe_post({
                     "action": "callMethod", "type": "StageController",
@@ -337,19 +350,15 @@ def register_guided_tools(mcp: FastMCP) -> None:
                 await asyncio.sleep(2)
                 continue
 
-            # Card placement phase
+            # ── 7. Card placement phase ──
             if phase == "ApplyLibrarianCardPhase":
                 await _safe_post({"action": "playBattleRound"})
                 await asyncio.sleep(2)
                 continue
 
-            # ArrangeEquippedCards: transient, auto-transitions
-            if phase == "ArrangeEquippedCards":
-                await asyncio.sleep(1)
-                continue
-
-            # Default: wait for animations
-            await asyncio.sleep(3)
+            # ── 8. Transient phases (auto-transition) ──
+            # ArrangeEquippedCards, SortUnitPhase, DrawCardPhase, etc.
+            await asyncio.sleep(2)
 
         return {"result": "timeout", "rounds": max_rounds}
 
@@ -461,16 +470,12 @@ def register_guided_tools(mcp: FastMCP) -> None:
 
 # ── Internal helpers (not exposed as tools) ──
 
-async def _pick_best_emotion_card() -> int:
-    """Get emotion candidates and return the best card index.
+def _pick_best_from_candidates(cards: list[dict[str, Any]]) -> int:
+    """Pick the best emotion card index from a candidates list.
 
     Heuristic: prefer Positive state, then highest emotionLevel.
     The LLM can override this by calling select_emotion_card directly.
     """
-    result = _result(await _safe_post({"action": "getEmotionCandidates"}))
-    if not isinstance(result, dict) or not result.get("active"):
-        return 0
-    cards = result.get("candidates", [])
     if not cards:
         return 0
     best = max(cards, key=lambda c: (
