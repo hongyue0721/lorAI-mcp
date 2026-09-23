@@ -42,7 +42,10 @@ namespace LorAIHost
             }
             catch { }
 
-            // ── 战斗状态机（inBattle 语义与 StateExporter.GetBattleState 完全一致）──
+            // ── 战斗状态机 ──
+            // StageController.battleState 是单例字段，战斗结束回图书馆后可能残留
+            // （实测: 战斗收尾后仍为 Setting）。"在战斗中"必须由场景事实背书：
+            // 只有战斗场景或战斗内剧情场景激活时，battleState 才算在战斗。
             try
             {
                 var sc = Singleton<StageController>.Instance;
@@ -51,7 +54,9 @@ namespace LorAIHost
                     f.StageControllerExists = true;
                     f.BattleState = sc.battleState.ToString();
                     f.BattlePhase = sc.Phase.ToString();
-                    f.InBattle = f.BattleState != "None" && f.BattlePhase != "EndBattle";
+                    bool sceneBacked = f.ActiveScene == "Battle" || f.ActiveScene == "Story";
+                    f.InBattle = sceneBacked
+                        && f.BattleState != "None" && f.BattlePhase != "EndBattle";
                 }
             }
             catch { }

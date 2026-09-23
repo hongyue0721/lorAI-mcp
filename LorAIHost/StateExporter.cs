@@ -561,11 +561,12 @@ namespace LorAIHost
                 return result;
             }
 
-            // Determine if we are in battle
+            // inBattle 判定唯一来源 = GameFactsCollector（与 availability 门控同一规则，
+            // 含"战斗场景背书"，防止 StageController 单例残留字段谎报在战斗中）
+            var battleFacts = GameFactsCollector.Collect();
             var battleState = stageCtrl.battleState;
             var phase = stageCtrl.Phase;
-            bool inBattle = battleState != StageController.BattleState.None
-                         && phase != StageController.StagePhase.EndBattle;
+            bool inBattle = battleFacts.InBattle;
 
             result["inBattle"] = inBattle;
             if (!inBattle) return result;
