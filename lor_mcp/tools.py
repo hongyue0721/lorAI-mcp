@@ -47,6 +47,12 @@ async def _get_client() -> httpx.AsyncClient:
 async def _post_action(body: dict[str, Any]) -> dict[str, Any]:
     client = await _get_client()
     resp = await client.post("/action", json=body)
+    # 400 unknown_action / 409 invalid_action 是结构化契约：返回给调用方处理，不作为 HTTP 异常抛出
+    if resp.status_code in (400, 409):
+        try:
+            return resp.json()
+        except ValueError:
+            pass
     resp.raise_for_status()
     return resp.json()
 

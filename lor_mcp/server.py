@@ -144,6 +144,25 @@ async def health_check() -> dict[str, Any]:
         return {"online": False, "error": str(exc)}
 
 
+@mcp.tool()
+async def get_available_actions() -> dict[str, Any]:
+    """Get the environment ground truth: actions legal to execute in the CURRENT game state.
+
+    Thin passthrough of GET /actions/available — the C# mod's ActionAvailability
+    is the ONLY judge. This tool never re-infers availability in Python.
+
+    Returns stateVersion/protocolVersion, current state summary, availableActions
+    (availableActions excludes debug/bypass actions) and per-action structured verdicts.
+    """
+    client = await _get_client()
+    try:
+        resp = await client.get("/actions/available")
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as exc:
+        return {"error": str(exc)}
+
+
 # ──────────────────────────── state ────────────────────────────
 
 @mcp.tool()
@@ -305,6 +324,12 @@ async def act(action: str, params: str = "") -> dict[str, Any]:
         _parse_params_into(params, body)
     try:
         resp = await client.post("/action", json=body)
+        # 400 unknown_action / 409 invalid_action 是结构化契约，原样透传给上层
+        if resp.status_code in (400, 409):
+            try:
+                return resp.json()
+            except ValueError:
+                pass
         resp.raise_for_status()
         return resp.json()
     except httpx.HTTPError as exc:
