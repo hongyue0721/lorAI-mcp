@@ -352,7 +352,9 @@ namespace LorAIHost
                 var invModel = Singleton<InventoryModel>.Instance;
                 if (invModel != null)
                 {
-                    var cardList = invModel.GetCardList();
+                    // GetCardListOrigin 是游戏内部数据的唯一事实源：游戏约定 null 表示空库存
+                    // （GetCardList/GetCardTypeCount 对 null backing 字段会抛 NRE，不走它们）
+                    var cardList = invModel.GetCardListOrigin();
                     var cards = new List<Dictionary<string, object>>();
                     if (cardList != null)
                     {
@@ -371,7 +373,8 @@ namespace LorAIHost
                         }
                     }
                     result["cards"] = cards;
-                    result["cardTypeCount"] = invModel.GetCardTypeCount();
+                    // 非 null 时游戏自己的计数是安全的；null(空库存)按游戏语义即 0
+                    result["cardTypeCount"] = cardList != null ? (object)invModel.GetCardTypeCount() : (object)0;
                 }
             }
             catch (Exception e)
