@@ -11,7 +11,10 @@
 检查 bridge 是否在线。
 
 ### `get_game_state`
-完整游戏状态（navigation/battle/stages/inventory）。
+完整游戏状态（navigation/battle/stages/inventory + `availableActions` 当前可执行动作 + `meta.stateVersion/protocolVersion`）。
+
+### `get_available_actions`
+**当前可执行动作**。薄封装 `GET /actions/available`，判定完全来自游戏内 C# `ActionAvailability`（游戏状态 + 动作真实前置条件），Python 不重新推断。返回 availableActions 与逐动作 `{action, category, available, reasonCode}`。`debug` 类动作（killAllEnemy/callMethod 等）永不计入。
 
 ### `get_state_layer(layer)`
 获取指定层级状态。layer: `navigation` / `progression` / `floors` / `inventory` / `availablestages` / `battle`
@@ -85,6 +88,7 @@
 
 ### `act(action, params="")`
 通用 action 分发器。可调用所有底层 C# action。params 为逗号分隔的 key=value 对。
+当前状态非法的 agent/query 动作返回结构化 `{"error":"invalid_action", reasonCode, availableActions, ...}`（HTTP 409 透传），未知动作返回 `{"error":"unknown_action", ...}`（400 透传）。
 
 ---
 

@@ -25,7 +25,8 @@
 
 返回完整游戏状态，包含以下层级：
 
-- `meta` — 时间戳、游戏版本
+- `meta` — 时间戳、游戏版本、`stateVersion`、`protocolVersion`
+- `availableActions` — 当前可执行动作集合，与 `GET /actions/available`、`POST /action` 门控同一判定源
 - `navigation` — 当前 UI phase、场景、Sephirah
 - `progression` — 章节、已开 Sephirah、图书馆等级
 - `floors` — 所有楼层详情（等级、单位、编队）
@@ -36,7 +37,8 @@
 **响应**：
 ```json
 {
-  "meta": { "timestamp": "...", "gameVersion": "1.0" },
+  "meta": { "timestamp": "...", "gameVersion": "1.0", "stateVersion": 1, "protocolVersion": "1.1.0" },
+  "availableActions": ["navigate", "selectSephirah", "getFloor", "getGameState"],
   "navigation": {
     "currentUIPhase": "Sephirah",
     "currentSephirah": "Malkuth",
@@ -55,6 +57,39 @@
 返回单个状态层。
 
 支持的 layer：`navigation`、`progression`、`floors`、`inventory`、`availablestages`、`battle`
+
+---
+
+### `GET /actions/available`
+
+合法动作查询端点。基于当前游戏真实状态判定哪些动作可执行（ValidActions(s_t)），
+判定逻辑集中在 `ActionAvailability`（纯函数 + 静态注册表），不依赖 LLM/检索/启发式。
+
+**响应**：
+```json
+{
+  "stateVersion": 1,
+  "protocolVersion": "1.1.0",
+  "state": {
+    "activeScene": "Battle",
+    "currentUIPhase": "Battle",
+    "battlePhase": "ApplyLibrarianCardPhase",
+    "inBattle": true
+  },
+  "availableActions": ["autoPlay", "confirmCards", "playBattleRound", "getBattleUnits", "getStageInfo", "getGameState"],
+  "actions": [
+    { "action": "autoPlay", "category": "agent", "available": true, "reasonCode": "ok" },
+    { "action": "selectEmotionCard", "category": "agent", "available": false, "reasonCode": "emotion_select_inactive" },
+    { "action": "killAllEnemy", "category": "debug", "available": false, "reasonCode": "ok" }
+  ]
+}
+```
+
+约定：
+- `category`: `agent`（改变游戏状态的正式动作）/ `query`（只读）/ `debug`（反射、作弊、强制推进）
+- **debug 动作永远 `available=false`**（不被误当作普通玩家操作），但 `POST /action` 仍可直接执行它们（保留开发能力）
+- 状态不可判定时按 `false` 处理，绝不猜测
+- `reasonCode` 是机器短码，不是文案
 
 ---
 
@@ -105,14 +140,17 @@ HTTP 响应会被挂起，直到协程完成或超时（30 秒）。完成后返
 }
 ```
 
-**错误响应**：
-```json
-{
-  "status": "error",
-  "action": { ... },
-  "result": { "success": false, "error": "StageController.Instance is null" }
-}
-```
+**错误契约（四类可区分）**：
+
+| 类别 | HTTP | 响应 |
+|---|---|---|
+| 未知动作 | `400` | `{"error":"unknown_action","action":...,"knownActions":[...]}` |
+| 已知但当前状态非法 | `409` | `{"error":"invalid_action","action":...,"reasonCode":...,"availableActions":[...],"state":{...}}` |
+| 动作执行失败（业务） | `200` | `{"status":"error","result":{"success":false,"error":...}}` |
+| 内部异常 | `200` | `{"status":"error","result":{"code":"internal_error","error":...,"stack":...}}` |
+
+`409` 的门控判定与 `GET /actions/available` / `/state.availableActions` 完全同源；
+`debug` 类动作不受门控（可直接执行），但永不出现在 `availableActions`。
 
 ---
 
@@ -122,59 +160,49 @@ HTTP 响应会被挂起，直到协程完成或超时（30 秒）。完成后返
 
 ---
 
-## Action 列表
+## Action 分类与可用性条件
 
-### 导航
+可用性由 `ActionAvailability` 注册表集中判定；下表的条件是判定条件的忠实转述。
+`s.ActiveScene`/`s.BattlePhase` 等指 `GameStateFacts` 采集字段。
 
-| Action | 参数 | 说明 |
+### Agent（普通玩家操作，计入 availableActions）
+
+| Action | Category | Availability condition |
 |---|---|---|
-| `navigate` | `phase` | 导航 UI 界面 |
-| `selectSephirah` | `sephirah` | 选择 Sephirah 楼层 |
-| `getFloor` | `sephirah` | 获取楼层信息 |
-| `startGame` | — | 点击标题 Continue |
+| `startGame` | agent | ActiveScene=Title 且 UITitleController 可用 |
+| `navigate` | agent | ActiveScene=Main 且 UIController 就绪 且 不在战斗 |
+| `selectSephirah` | agent | 同 navigate |
+| `startStage` | agent | Main + 不在战斗 + LibraryModel 就绪 + UIInvitationPanel 在场 |
+| `prepareBattle` | agent | 同 startStage |
+| `runStage` | agent | 同 startStage（宏观复合动作，内部自带跳过剧情） |
+| `startBattle` | agent | UIBattleSettingPanel 在场 且 不在战斗 |
+| `autoPlay` | agent | 战斗中 且 Phase=ApplyLibrarianCardPhase |
+| `confirmCards` | agent | 同 autoPlay |
+| `playBattleRound` | agent | 同 autoPlay |
+| `selectEmotionCard` | agent | levelup UI enabled 且存在活跃候选 |
+| `endBattle` | agent | StageController 战斗窗口内 且 Phase=EndBattle |
+| `closeBattleScene` | agent | ActiveScene=Battle 且 Phase=EndBattle |
+| `clickBattleResult` | agent | UIBattleResultPanel 在场 且 ActiveScene=Battle |
+| `skipStory` / `endStory` / `advanceStory` | agent | ActiveScene=Story 或 Phase=BattleStoryPhase |
 
-### 战斗
+### Query（只读，语义 = 当前状态下能产出有效数据）
 
-| Action | 参数 | 说明 |
+| Action | Category | Availability condition |
 |---|---|---|
-| `startStage` | `stageId` | 在邀请面板上设置关卡 |
-| `runStage` | `stageId` | 完整流程（deferred） |
-| `prepareBattle` | `stageId` | 自动选书 + PrepareBattle |
-| `startBattle` | — | 从 BattleSetting 开始 |
-| `autoPlay` | — | 自动出牌 |
-| `playBattleRound` | — | autoPlay + confirm 原子操作 |
-| `confirmCards` | — | 确认出牌（仅 ApplyLibrarianCardPhase） |
-| `endBattle` | — | 结束战斗 |
-| `closeBattleScene` | — | 关闭战斗场景 |
-| `clickBattleResult` | — | 点击结算 |
-| `gameOver` | `isWin`, `isBackButton` | 触发 GameOver |
-| `killAllEnemy` | — | 秒杀（调试） |
-| `getStageInfo` | `stageId` | 关卡状态 |
+| `getFloor` | query | LibraryModel 就绪 |
+| `getStageInfo` | query | StageController 存在且 battleState≠None |
+| `getBattleUnits` | query | 战斗中 或 ActiveScene=Battle |
+| `getEmotionCandidates` | query | 战斗中 且 Phase=RoundEndPhase |
+| `getGameState` | query | 总是 |
 
-### 高级
+### Debug（可执行，默认不计入 availableActions）
 
-| Action | 参数 | 说明 |
+| Action | Category | 说明 |
 |---|---|---|
-| `getBattleUnits` | — | 所有战斗单位详细数据 |
-| `getEmotionCandidates` | — | 情绪卡候选列表 |
-| `selectEmotionCard` | `index` | 选情绪卡 |
-| `forceAdvancePhase` | `phase` | 强制推进卡住的 phase |
-
-### 剧情
-
-| Action | 参数 | 说明 |
-|---|---|---|
-| `skipStory` | — | 跳过剧情 |
-| `endStory` | `forcely` | 结束剧情 |
-| `advanceStory` | — | 推进剧情 |
-
-### 调试
-
-| Action | 参数 | 说明 |
-|---|---|---|
-| `listMethods` | `type` | 列出类型方法 |
-| `callMethod` | `type`, `method`, `args` | 反射调用 |
-| `getGameState` | — | 诊断 singleton 状态 |
+| `killAllEnemy` | debug | 秒杀全体敌人 |
+| `gameOver` | debug | 直接触发 GameOver |
+| `forceAdvancePhase` | debug | 反射写 `_phase` 强制推进 |
+| `listMethods` / `callMethod` | debug | 任意反射读写 |
 
 ---
 
