@@ -10,29 +10,30 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <GameDir>D:\steam\steamapps\common\Library Of Ruina</GameDir>
-    <ManagedDir>$(GameDir)\LibraryOfRuina_Data\Managed</ManagedDir>
+    <!-- 可用 -p:GameDir=<路径> 覆盖；斜杠分隔在 Windows/Linux 均可用 -->
+    <GameDir>D:/steam/steamapps/common/Library Of Ruina</GameDir>
+    <ManagedDir>$(GameDir)/LibraryOfRuina_Data/Managed</ManagedDir>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="Assembly-CSharp">
-      <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
+      <HintPath>$(ManagedDir)/Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>$(ManagedDir)/UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.UI">
-      <HintPath>$(ManagedDir)\UnityEngine.UI.dll</HintPath>
+      <HintPath>$(ManagedDir)/UnityEngine.UI.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Assembly-CSharp-firstpass">
-      <HintPath>$(ManagedDir)\Assembly-CSharp-firstpass.dll</HintPath>
+      <HintPath>$(ManagedDir)/Assembly-CSharp-firstpass.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>$(ManagedDir)\UnityEngine.IMGUIModule.dll</HintPath>
+      <HintPath>$(ManagedDir)/UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
