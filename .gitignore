@@ -33,3 +33,7 @@ desktop.ini
 # Environment files
 .env
 .env.*
+
+# .NET test project artifacts
+LorAIHost.Tests/bin/
+LorAIHost.Tests/obj/
