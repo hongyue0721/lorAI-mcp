@@ -625,7 +625,9 @@ namespace LorAIHost
 
         // ── Emotion card helpers ──
 
-        private static object GetLevelUpUI()
+        // internal: 供 GameFactsCollector 采集情绪选择事实，与动作执行共用同一判定源
+
+        internal static object GetLevelUpUI()
         {
             Type bmiType = null;
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
@@ -666,13 +668,13 @@ namespace LorAIHost
             return levelupField.GetValue(bmi);
         }
 
-        private static bool IsLevelUpUIEnabled(object levelupUi)
+        internal static bool IsLevelUpUIEnabled(object levelupUi)
         {
             PropertyInfo prop = levelupUi.GetType().GetProperty("IsEnabled");
             return prop != null && (bool)prop.GetValue(levelupUi, null);
         }
 
-        private static object[] GetCandidatesArray(object levelupUi)
+        internal static object[] GetCandidatesArray(object levelupUi)
         {
             FieldInfo field = levelupUi.GetType().GetField("candidates",
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);

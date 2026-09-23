@@ -49,20 +49,13 @@ namespace LorAIHost
                     case "forceAdvancePhase": return AdvancedActions.DoForceAdvancePhase(args);
 
                     default:
+                        // 注册表是唯一事实源：未知动作的提示列表直接来自 ActionAvailability，
+                        // 新增 case 时由离线一致性测试强制同步注册表，不再手工维护两份名单
                         return new Dictionary<string, object>
                         {
                             ["error"] = $"Unknown action: {actionName}",
-                            ["available"] = new List<string> {
-                                "navigate", "selectSephirah", "getFloor",
-                                "startStage", "runStage", "startBattle",
-                                "autoPlay", "confirmCards", "playBattleRound",
-                                "endBattle", "closeBattleScene", "clickBattleResult",
-                                "gameOver", "killAllEnemy", "getStageInfo",
-                                "skipStory", "endStory", "advanceStory",
-                                "listMethods", "callMethod", "getGameState",
-                                "startGame", "prepareBattle", "getBattleUnits",
-                                "getEmotionCandidates", "selectEmotionCard", "forceAdvancePhase"
-                            }
+                            ["code"] = "unknown_action",
+                            ["available"] = new List<string>(ActionAvailability.AllActionNames)
                         };
                 }
             }
@@ -71,6 +64,7 @@ namespace LorAIHost
                 return new Dictionary<string, object>
                 {
                     ["error"] = ex.Message,
+                    ["code"] = "internal_error",
                     ["stack"] = ex.StackTrace
                 };
             }

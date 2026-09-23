@@ -25,9 +25,16 @@ namespace LorAIHost
                 ["meta"] = new Dictionary<string, object>
                 {
                     ["timestamp"] = DateTime.UtcNow.ToString("o"),
-                    ["gameVersion"] = Application.version
+                    ["gameVersion"] = Application.version,
+                    ["stateVersion"] = EnvProtocol.StateVersion,
+                    ["protocolVersion"] = EnvProtocol.ProtocolVersion
                 }
             };
+
+            // 合法动作 oracle：与 GET /actions/available、POST /action 门控共用
+            // ActionAvailability.Evaluate，禁止在此另写判断
+            try { state["availableActions"] = ActionAvailability.GetAvailableActions(GameFactsCollector.Collect()); }
+            catch (Exception e) { state["availableActionsError"] = e.Message; }
 
             try { state["navigation"] = GetNavigationState(); }
             catch (Exception e) { state["navigation"] = Error(e); }

@@ -134,6 +134,13 @@ namespace LorAIHost
                         return;
                     }
 
+                    // Available actions oracle → main thread (与 /state 同一采集/判定源)
+                    if (path == "/actions/available")
+                    {
+                        Enqueue(ctx, method, path, null);
+                        return;
+                    }
+
                     // Static file listing
                     if (path == "/static")
                     {
@@ -287,6 +294,13 @@ namespace LorAIHost
                         continue;
                     }
 
+                    // ── GET /actions/available ──
+                    if (pending.Method == "GET" && pending.Path == "/actions/available")
+                    {
+                        RespondJson(pending.Context.Response, 200, BuildAvailableActionsResponse());
+                        continue;
+                    }
+
                     // ── POST /action ──
                     if (pending.Method == "POST" && pending.Path == "/action")
                     {
@@ -296,6 +310,44 @@ namespace LorAIHost
                         if (parsed != null && parsed.ContainsKey("action") && parsed["action"] is string a)
                         {
                             action = a;
+                        }
+
+                        // ── 可用性门控：与 GET /actions/available、/state.availableActions 完全同源 ──
+                        // 四类错误区分：
+                        //   unknown action      → 400 {"error":"unknown_action"}
+                        //   known but invalid   → 409 {"error":"invalid_action", reasonCode, ...}
+                        //   execution failed    → 200 {"status":"error", result.error}（保持旧契约）
+                        //   internal exception  → 200 {"status":"error", result.code="internal_error"}
+                        if (!ActionAvailability.IsKnownAction(action))
+                        {
+                            RespondJson(pending.Context.Response, 400, new Dictionary<string, object>
+                            {
+                                { "error", "unknown_action" },
+                                { "action", action },
+                                { "knownActions", new List<string>(ActionAvailability.AllActionNames) }
+                            });
+                            continue;
+                        }
+
+                        GameStateFacts gateFacts = GameFactsCollector.Collect();
+                        ExecutionCheck gate = ActionAvailability.CheckForExecution(gateFacts, action);
+                        if (!gate.Allowed)
+                        {
+                            RespondJson(pending.Context.Response, 409, new Dictionary<string, object>
+                            {
+                                { "error", "invalid_action" },
+                                { "action", action },
+                                { "reasonCode", gate.ReasonCode },
+                                { "availableActions", ActionAvailability.GetAvailableActions(gateFacts) },
+                                { "state", new Dictionary<string, object>
+                                    {
+                                        { "activeScene", gateFacts.ActiveScene },
+                                        { "currentUIPhase", gateFacts.UiPhase },
+                                        { "battlePhase", gateFacts.BattlePhase }
+                                    }
+                                }
+                            });
+                            continue;
                         }
 
                         Dictionary<string, object> result = ActionHandler.Execute(action, parsed);
@@ -349,6 +401,44 @@ namespace LorAIHost
                     catch { }
                 }
             }
+        }
+
+        /// <summary>
+        /// oracle 响应构造。availableActions 与 actions[].available 来自同一次 Evaluate，
+        /// 不可能出现两处不一致。
+        /// </summary>
+        private static Dictionary<string, object> BuildAvailableActionsResponse()
+        {
+            var facts = GameFactsCollector.Collect();
+            var eval = ActionAvailability.Evaluate(facts);
+            var names = new List<object>();
+            var actions = new List<object>();
+            foreach (var r in eval)
+            {
+                actions.Add(new Dictionary<string, object>
+                {
+                    { "action", r.Action },
+                    { "category", r.Category },
+                    { "available", r.Available },
+                    { "reasonCode", r.ReasonCode }
+                });
+                if (r.Available) names.Add(r.Action);
+            }
+            return new Dictionary<string, object>
+            {
+                { "stateVersion", EnvProtocol.StateVersion },
+                { "protocolVersion", EnvProtocol.ProtocolVersion },
+                { "state", new Dictionary<string, object>
+                    {
+                        { "activeScene", facts.ActiveScene },
+                        { "currentUIPhase", facts.UiPhase },
+                        { "battlePhase", facts.BattlePhase },
+                        { "inBattle", facts.InBattle }
+                    }
+                },
+                { "availableActions", names },
+                { "actions", actions }
+            };
         }
 
         // ─── Response helpers ─────────────────────────────────────
